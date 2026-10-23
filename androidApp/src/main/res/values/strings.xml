@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="app_name">Herd</string>
+  <string name="recenter">Show my location</string>
+  <string name="location_off_title">Location is off for Herd</string>
+  <string name="location_off_body">The map works without it, but your position won\'t show.</string>
+  <string name="location_allow">Allow</string>
+  <string name="location_open_settings">Open settings</string>
+  <string name="location_services_off">Location services are turned off on this phone.</string>
+  <string name="location_services_enable">Turn on</string>
+</resources>
