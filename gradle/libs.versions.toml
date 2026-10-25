@@ -1,0 +1,31 @@
+[versions]
+# Kotlin, AGP and Compose are pinned to the versions maplibre-compose 0.20.0 builds with.
+agp = "9.3.1"
+kotlin = "2.4.20"
+compose-multiplatform = "1.12.1"
+compose-material3 = "1.12.0-alpha03"
+androidx-activity = "1.13.0"
+maplibre-compose = "0.20.0"
+
+android-compileSdk = "37"
+android-targetSdk = "36"
+android-minSdk = "24"
+
+[libraries]
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }
+compose-foundation = { module = "org.jetbrains.compose.foundation:foundation", version.ref = "compose-multiplatform" }
+compose-ui = { module = "org.jetbrains.compose.ui:ui", version.ref = "compose-multiplatform" }
+compose-material3 = { module = "org.jetbrains.compose.material3:material3", version.ref = "compose-material3" }
+maplibre-compose = { module = "org.maplibre.compose:maplibre-compose", version.ref = "maplibre-compose" }
+maplibre-compose-material3 = { module = "org.maplibre.compose:maplibre-compose-material3", version.ref = "maplibre-compose" }
+# Renderer backend packaged into the APK. maplibre-compose ships it separately (OpenGL or Vulkan).
+maplibre-compose-runtime-opengl = { module = "org.maplibre.compose:maplibre-compose-runtime-opengl-android", version.ref = "maplibre-compose" }
+maplibre-location = { module = "org.maplibre.compose:location", version.ref = "maplibre-compose" }
+# Google Play Services fused location backend for maplibre-compose's location provider.
+maplibre-location-gms = { module = "org.maplibre.compose:location-runtime-gms", version.ref = "maplibre-compose" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-kmp-library = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
