@@ -12,13 +12,40 @@ routes that guide you back on course when you leave them. Android first (Kotlin)
 - Asks for foreground location once. If denied, the map still works and a banner offers to fix it.
 - Location updates run only while the map is on screen.
 
+## v0.2: search and a single route
+
+- Search bar with suggestions as you type, ranked near your position.
+- Pick a result, or long-press anywhere on the map, to get a driving route from where you are.
+  A dropped pin gets its address from reverse geocoding.
+- The route card shows distance and drive time, with "Avoid highways" and "Avoid tolls" toggles.
+
+### Search and routing servers
+
+During development Herd uses free public servers with no API key:
+
+| Service | Server | Notes |
+|---|---|---|
+| Search ([Photon](https://github.com/komoot/photon)) | `photon.komoot.io` | Komoot's public instance. Fair use only. |
+| Routing ([Valhalla](https://github.com/valhalla/valhalla)) | `valhalla1.openstreetmap.de` | FOSSGIS's public instance. Refuses routes over 1,500 km. |
+
+Both have usage limits, so the app debounces typing (300 ms, 3+ characters), cancels superseded
+requests, and only routes when you pick a destination or change an option. Base URLs live in
+`shared/.../net/HerdServices.kt`; pointing them at self-hosted servers needs no other change.
+
 ## Project layout
 
 ```
-androidApp/   Android app: Compose UI, MainActivity, MapScreen
-shared/       Kotlin Multiplatform module (Android + iOS): map defaults, location request profiles
+androidApp/   Android app: Compose UI (MapScreen, SearchBar, RouteCard), MapViewModel
+shared/       Kotlin Multiplatform module (Android + iOS):
+  net/          HTTP client setup, service URLs
+  search/       Photon client and Place model
+  routing/      Valhalla client, polyline decoding, Route model
+  planner/      RoutePlanner: search-and-route state shared by both apps
+  format/       distance and duration text
 gradle/libs.versions.toml   all dependency versions
 ```
+
+Shared tests run on the JVM: `./gradlew :shared:testAndroidHostTest`.
 
 Key libraries: [maplibre-compose](https://github.com/maplibre/maplibre-compose) (map rendering,
 location provider, location puck), Google Play Services fused location (through maplibre-compose's
@@ -42,4 +69,5 @@ The iOS targets in `shared/` only build on macOS with Xcode; other hosts skip th
 ## Attribution
 
 Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL), tiles by
-OpenFreeMap, schema © OpenMapTiles. The map's attribution button shows this; keep it visible.
+OpenFreeMap, schema © OpenMapTiles. Search by Photon (komoot), routing by Valhalla (FOSSGIS
+server). The map's attribution button shows the map attribution; keep it visible.
