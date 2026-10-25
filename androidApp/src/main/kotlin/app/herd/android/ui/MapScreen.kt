@@ -216,6 +216,7 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
       SearchBar(
         state = plan,
         onQueryChange = planner::onQueryChanged,
+        onSubmit = planner::submitQuery,
         onSelect = planner::selectPlace,
         onClear = planner::clear,
         fieldModifier = Modifier.onSizeChanged { searchFieldHeight = with(density) { it.height.toDp() } },

@@ -29,6 +29,25 @@ class PhotonClientTest {
   }
 
   @Test
+  fun addressSearchesLeanOnDistance() = runTest {
+    val seen = mutableListOf<SeenRequest>()
+    val photon = PhotonClient(mockClient(Fixtures.PHOTON_EMPTY, seen = seen))
+    val here = Position(longitude = -119.7, latitude = 34.42)
+
+    photon.search("1200 state st", near = here)
+    photon.search("las vegas", near = here)
+    photon.search("1200 state st", near = null)
+
+    val (address, place, noBias) = seen.map { it.data.url.parameters }
+    assertEquals("10", address["zoom"])
+    assertEquals("0.2", address["location_bias_scale"])
+    // Place names keep Photon's default, so far-away destinations still rank first.
+    assertNull(place["zoom"])
+    assertNull(place["location_bias_scale"])
+    assertNull(noBias["zoom"])
+  }
+
+  @Test
   fun searchBuildsNamesAndSubtitles() = runTest {
     val photon = PhotonClient(mockClient(Fixtures.PHOTON_SEARCH_MORRO_BAY))
 

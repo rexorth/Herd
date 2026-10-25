@@ -41,6 +41,12 @@ class PhotonClient(
         near?.let {
           parameter("lat", it.latitude)
           parameter("lon", it.longitude)
+          // Photon's default bias lets prominence win, which is right for "Las Vegas" or
+          // "Portland" but puts "123 Main St" in another country. Street addresses lean on distance.
+          if (isStreetAddress(query)) {
+            parameter("zoom", ADDRESS_BIAS_ZOOM)
+            parameter("location_bias_scale", ADDRESS_BIAS_SCALE)
+          }
         }
       }
     return response.places()
@@ -58,11 +64,22 @@ class PhotonClient(
     return response.places().firstOrNull()
   }
 
+  private companion object {
+    /** Bias radius for address searches, in map-zoom terms: wider than Photon's default of 12. */
+    const val ADDRESS_BIAS_ZOOM = 10
+
+    /** How much prominence still counts for address searches: 0 ignores it, Photon's default is 0.4. */
+    const val ADDRESS_BIAS_SCALE = 0.2
+  }
+
   private suspend fun HttpResponse.places(): List<Place> {
     if (!status.isSuccess()) throw SearchException("Search failed (HTTP ${status.value})")
     return body<PhotonResponse>().features.mapNotNull { it.toPlace() }
   }
 }
+
+/** "1200 state st", "421 San Andres": queries that start with a house number. */
+internal fun isStreetAddress(query: String): Boolean = query.trimStart().firstOrNull()?.isDigit() == true
 
 internal fun PhotonFeature.toPlace(): Place? {
   val coordinates = geometry.coordinates

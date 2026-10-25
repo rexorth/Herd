@@ -18,6 +18,11 @@ routes that guide you back on course when you leave them. Android first (Kotlin)
 - Pick a result, or long-press anywhere on the map, to get a driving route from where you are.
   A dropped pin gets its address from reverse geocoding.
 - The route card shows distance and drive time, with "Avoid highways" and "Avoid tolls" toggles.
+- Enter searches exactly what's typed and goes to the top result. Searches that start with a house
+  number are ranked mostly by distance; place names keep their usual ranking so far-away
+  destinations ("Las Vegas") still come first.
+- OpenStreetMap doesn't have every US house number. When an address is missing, long-press its
+  spot on the map instead.
 
 ### Search and routing servers
 

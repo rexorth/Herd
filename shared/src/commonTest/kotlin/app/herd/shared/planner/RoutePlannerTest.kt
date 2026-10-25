@@ -31,12 +31,16 @@ class RoutePlannerTest {
   private class FakeSearch : PlaceSearch {
     val queries = mutableListOf<Pair<String, Position?>>()
     var results: List<Place> = emptyList()
+    /** Per-query answers; queries not listed get [results]. */
+    var resultsByQuery: Map<String, List<Place>> = emptyMap()
+    var searchGate: CompletableDeferred<Unit>? = null
     var reverseResult: Place? = null
     var reverseGate: CompletableDeferred<Unit>? = null
 
     override suspend fun search(query: String, near: Position?, limit: Int): List<Place> {
       queries += query to near
-      return results
+      searchGate?.await()
+      return resultsByQuery[query] ?: results
     }
 
     override suspend fun reverse(position: Position): Place? {
@@ -105,6 +109,52 @@ class RoutePlannerTest {
 
     assertEquals(1, search.queries.size)
     assertTrue(planner.state.value.suggestions.isEmpty())
+  }
+
+  @Test
+  fun enterSearchesWhatsTypedNotStaleSuggestions() = plannerTest { planner ->
+    planner.updateOrigin(here)
+    val stale = Place("Morro Bay Lane", "Ventura, California", Position(longitude = -119.214, latitude = 34.262))
+    val house = Place("1200 State Street", "Santa Barbara, California", Position(longitude = -119.7, latitude = 34.42))
+    search.resultsByQuery = mapOf("1200 sta" to listOf(stale), "1200 state st" to listOf(house))
+    planner.onQueryChanged("1200 sta")
+    advanceUntilIdle()
+    assertEquals(listOf(stale), planner.state.value.suggestions)
+
+    // Typed more and pressed Enter before the debounce ran a new search.
+    planner.onQueryChanged("1200 state st")
+    planner.submitQuery()
+    advanceUntilIdle()
+
+    assertEquals(listOf("1200 sta", "1200 state st"), search.queries.map { it.first })
+    assertEquals(house, planner.state.value.destination)
+    assertEquals(house.position, router.calls.single().second)
+  }
+
+  @Test
+  fun enterWithNoResultsExplains() = plannerTest { planner ->
+    planner.onQueryChanged("zzzqqq")
+    planner.submitQuery()
+    advanceUntilIdle()
+
+    assertEquals(null, planner.state.value.destination)
+    assertEquals("No places found for \u201czzzqqq\u201d.", planner.state.value.searchError)
+  }
+
+  @Test
+  fun lateSearchDoesNotRefillSuggestionsAfterPicking() = plannerTest { planner ->
+    search.results = listOf(morroBay)
+    search.searchGate = CompletableDeferred()
+    planner.onQueryChanged("morro")
+    advanceTimeBy(RoutePlanner.SEARCH_DEBOUNCE_MS + 1)
+    assertEquals(1, search.queries.size) // in flight, waiting on the server
+
+    planner.selectPlace(morroBay)
+    search.searchGate!!.complete(Unit)
+    advanceUntilIdle()
+
+    assertTrue(planner.state.value.suggestions.isEmpty())
+    assertFalse(planner.state.value.isSearching)
   }
 
   @Test

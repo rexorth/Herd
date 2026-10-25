@@ -8,14 +8,12 @@ import app.herd.shared.search.Place
 import app.herd.shared.search.PlaceSearch
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.maplibre.spatialk.geojson.Position
@@ -53,7 +51,6 @@ sealed interface RouteStatus {
  * The public servers behind [search] and [router] have fair-use limits, so typing is debounced,
  * superseded requests are cancelled, and location updates never trigger a new route on their own.
  */
-@OptIn(FlowPreview::class)
 class RoutePlanner(
   private val scope: CoroutineScope,
   private val search: PlaceSearch,
@@ -62,28 +59,47 @@ class RoutePlanner(
   private val mutableState = MutableStateFlow(PlannerState())
   val state: StateFlow<PlannerState> = mutableState.asStateFlow()
 
-  /** Latest search text to run, or null for none. A StateFlow, so no request is lost before collection starts. */
-  private val searchRequests = MutableStateFlow<String?>(null)
   private var origin: Position? = null
+  /** The pending or running search. Every user action that changes what to search cancels it. */
+  private var searchJob: Job? = null
   private var routeJob: Job? = null
   private var reverseJob: Job? = null
 
-  init {
-    scope.launch {
-      searchRequests.debounce(SEARCH_DEBOUNCE_MS).collectLatest { query ->
-        if (query != null) runSearch(query)
-      }
+  /** Updates the text and searches it after a short pause in typing. */
+  fun onQueryChanged(text: String) {
+    searchJob?.cancel()
+    mutableState.update { it.copy(query = text, searchError = null) }
+    val query = text.trim()
+    if (query.length < MIN_QUERY_LENGTH) {
+      mutableState.update { it.copy(suggestions = emptyList(), isSearching = false) }
+      return
     }
+    searchJob =
+      scope.launch {
+        delay(SEARCH_DEBOUNCE_MS)
+        runSearch(query)
+      }
   }
 
-  fun onQueryChanged(text: String) {
-    mutableState.update { it.copy(query = text, searchError = null) }
-    if (text.trim().length < MIN_QUERY_LENGTH) {
-      searchRequests.value = null
-      mutableState.update { it.copy(suggestions = emptyList(), isSearching = false) }
-    } else {
-      searchRequests.value = text.trim()
-    }
+  /**
+   * The user pressed Enter: search exactly what's typed now, without waiting for the debounce,
+   * and go to the top result. Suggestions on screen may be for older text, so they aren't used.
+   */
+  fun submitQuery() {
+    val query = mutableState.value.query.trim()
+    if (query.length < MIN_QUERY_LENGTH) return
+    searchJob?.cancel()
+    searchJob =
+      scope.launch {
+        val results = runSearch(query) ?: return@launch
+        val top = results.firstOrNull()
+        if (top == null) {
+          mutableState.update { it.copy(searchError = "No places found for \u201c$query\u201d.") }
+        } else {
+          reverseJob?.cancel()
+          setDestination(top)
+        }
+      }
   }
 
   /** The user's latest position. Routes from here; also biases search results. */
@@ -93,6 +109,7 @@ class RoutePlanner(
   }
 
   fun selectPlace(place: Place) {
+    searchJob?.cancel()
     reverseJob?.cancel()
     setDestination(place)
   }
@@ -100,6 +117,7 @@ class RoutePlanner(
   /** Route to a point picked on the map. Its name fills in once reverse geocoding answers. */
   fun pickPoint(position: Position) {
     val point = Position(longitude = normalizeLongitude(position.longitude), latitude = position.latitude)
+    searchJob?.cancel()
     reverseJob?.cancel()
     setDestination(Place(name = DROPPED_PIN_NAME, subtitle = null, position = point))
     reverseJob =
@@ -133,14 +151,13 @@ class RoutePlanner(
 
   /** Drops the destination and route. Route options stay as the user set them. */
   fun clear() {
+    searchJob?.cancel()
     routeJob?.cancel()
     reverseJob?.cancel()
-    searchRequests.value = null
     mutableState.update { PlannerState(options = it.options) }
   }
 
   private fun setDestination(place: Place) {
-    searchRequests.value = null
     mutableState.update {
       it.copy(
         query = place.name,
@@ -153,17 +170,20 @@ class RoutePlanner(
     requestRoute()
   }
 
-  private suspend fun runSearch(query: String) {
+  /** Searches [query] and shows the results as suggestions. Returns them, or null if the search failed. */
+  private suspend fun runSearch(query: String): List<Place>? {
     mutableState.update { it.copy(isSearching = true) }
-    try {
-      val results = search.search(query, near = origin)
-      mutableState.update { it.copy(suggestions = results) }
+    return try {
+      search.search(query, near = origin).also { results ->
+        mutableState.update { it.copy(suggestions = results) }
+      }
     } catch (e: CancellationException) {
       throw e
     } catch (e: Exception) {
       mutableState.update {
         it.copy(suggestions = emptyList(), searchError = "Search isn't available right now.")
       }
+      null
     } finally {
       mutableState.update { it.copy(isSearching = false) }
     }

@@ -19,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,6 +42,7 @@ import app.herd.shared.search.Place
 fun SearchBar(
   state: PlannerState,
   onQueryChange: (String) -> Unit,
+  onSubmit: () -> Unit,
   onSelect: (Place) -> Unit,
   onClear: () -> Unit,
   modifier: Modifier = Modifier,
@@ -48,6 +50,12 @@ fun SearchBar(
 ) {
   val focusManager = LocalFocusManager.current
   var focused by remember { mutableStateOf(false) }
+
+  // A new destination, from a tap, Enter or a long-press, closes the keyboard and suggestions.
+  // Keyed on position, so a dropped pin's name filling in later doesn't take focus away again.
+  LaunchedEffect(state.destination?.position) {
+    if (state.destination != null) focusManager.clearFocus()
+  }
 
   Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
     Surface(shape = RoundedCornerShape(28.dp), shadowElevation = 6.dp, modifier = fieldModifier) {
@@ -68,13 +76,9 @@ fun SearchBar(
         },
         singleLine = true,
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-        keyboardActions =
-          KeyboardActions(
-            onSearch = {
-              focusManager.clearFocus()
-              state.suggestions.firstOrNull()?.let(onSelect)
-            }
-          ),
+        // Enter searches exactly what's typed and goes to the top result; the field keeps focus
+        // so "no results" can show, and lets go once a destination is picked (below).
+        keyboardActions = KeyboardActions(onSearch = { onSubmit() }),
         shape = RoundedCornerShape(28.dp),
         colors =
           TextFieldDefaults.colors(
@@ -102,10 +106,7 @@ fun SearchBar(
           if (index > 0) HorizontalDivider()
           SuggestionRow(
             place,
-            onClick = {
-              focusManager.clearFocus()
-              onSelect(place)
-            },
+            onClick = { onSelect(place) },
           )
         }
       }
