@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # publish the dev-build release below
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -27,6 +29,21 @@ jobs:
         with:
           name: herd-debug-apk
           path: androidApp/build/outputs/apk/debug/*.apk
+
+      # A plain .apk you can tap to install on a phone, at a link that never changes:
+      # https://github.com/<owner>/<repo>/releases/tag/dev-build. Replaced on every push.
+      - name: Publish dev-build release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp androidApp/build/outputs/apk/debug/androidApp-debug.apk herd-debug.apk
+          gh release delete dev-build --cleanup-tag --yes || true
+          gh release create dev-build herd-debug.apk \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Herd dev build" \
+            --notes "Debug build of \`${GITHUB_REF_NAME}\` at ${GITHUB_SHA::7}. Tap herd-debug.apk below to download and install."
 
       - name: Upload test report
         if: failure()

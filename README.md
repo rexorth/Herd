@@ -70,8 +70,12 @@ platform 37.
 ./gradlew :androidApp:installDebug   # with a phone connected (USB debugging on)
 ```
 
-Or open the folder in Android Studio and run the `androidApp` configuration. Each push also builds
-a debug APK in GitHub Actions ("Android build" workflow, `herd-debug-apk` artifact).
+Or open the folder in Android Studio and run the `androidApp` configuration.
+
+To install on a phone without Android Studio, open the
+[Herd dev build](https://github.com/rexorth/Herd/releases/tag/dev-build) release and tap
+`herd-debug.apk`. CI replaces it with a fresh debug build on every push. Each CI run also keeps a
+zipped copy as the `herd-debug-apk` artifact.
 
 The iOS targets in `shared/` only build on macOS with Xcode; other hosts skip them.
 
