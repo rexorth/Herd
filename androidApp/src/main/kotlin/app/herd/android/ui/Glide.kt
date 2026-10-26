@@ -43,6 +43,9 @@ class Glide {
       show(target, onFrame)
       return
     }
+    // Navigation reports a fix every second even at a red light; nothing to animate, so the map
+    // can stop redrawing.
+    if (from == target) return
     val start = withFrameNanos { it }
     var fraction: Double
     do {

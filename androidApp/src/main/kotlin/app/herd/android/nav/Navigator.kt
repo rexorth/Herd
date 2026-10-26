@@ -43,6 +43,7 @@ import uniffi.ferrostar.GeographicCoordinate
 import uniffi.ferrostar.NavigationControllerConfig
 import uniffi.ferrostar.Route
 import uniffi.ferrostar.RouteAdapter
+import uniffi.ferrostar.RouteDeviation
 import uniffi.ferrostar.RouteDeviationTracking
 import uniffi.ferrostar.TripState
 import uniffi.ferrostar.UserLocation
@@ -65,6 +66,7 @@ sealed interface NavUiState {
     val trip: TripState.Navigating,
     /** The line being followed. Changes when the trip reroutes. */
     val routeGeometry: List<Position>,
+    /** From the moment the car is found off the route until the new route replaces it. */
     val isRerouting: Boolean,
     val isMuted: Boolean,
     val isSimulating: Boolean,
@@ -195,9 +197,13 @@ class Navigator(context: Context, private val scope: CoroutineScope) {
         else -> return
       }
     when (val trip = nav.tripState) {
-      is TripState.Navigating ->
+      is TripState.Navigating -> {
+        // Ferrostar flags the deviation as soon as it sees it, but only reports fetching while the
+        // request is out, and it waits a few seconds between attempts. The new route clears both.
+        val rerouting = nav.isCalculatingNewRoute || trip.deviation is RouteDeviation.Deviation
         mutableState.value =
-          NavUiState.Navigating(destination, trip, positions(nav.routeGeometry), nav.isCalculatingNewRoute, muted, simulating)
+          NavUiState.Navigating(destination, trip, positions(nav.routeGeometry), rerouting, muted, simulating)
+      }
 
       is TripState.Complete -> {
         mutableState.value = NavUiState.Arrived(destination)

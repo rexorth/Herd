@@ -29,12 +29,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -49,16 +52,12 @@ import app.herd.android.nav.NavUiState
 import app.herd.shared.LocationProfiles
 import app.herd.shared.MapDefaults
 import app.herd.shared.planner.RouteStatus
-import app.herd.shared.smoothingDuration
 import kotlin.time.Duration
-import kotlin.time.TimeSource
 import kotlinx.coroutines.launch
-import org.maplibre.compose.camera.CameraAnimation
 import org.maplibre.compose.camera.CameraFit
 import org.maplibre.compose.camera.CameraMoveReason
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.CameraUpdate
-import org.maplibre.compose.camera.CubicBezier
 import org.maplibre.compose.expressions.dsl.const
 import org.maplibre.compose.expressions.value.LineCap
 import org.maplibre.compose.expressions.value.LineJoin
@@ -66,12 +65,13 @@ import org.maplibre.compose.interaction.ClickResult
 import org.maplibre.compose.interaction.MapInteractions
 import org.maplibre.compose.layers.CircleLayer
 import org.maplibre.compose.layers.LineLayer
-import org.maplibre.compose.location.BearingUpdate
 import org.maplibre.compose.location.LocationPermission
+import org.maplibre.compose.location.LocationState
 import org.maplibre.compose.location.LocationTrackingEffect
+import org.maplibre.compose.location.mostAccurateBearing
+import org.maplibre.compose.location.mostAccurateBearingAccuracy
 import org.maplibre.compose.location.rememberDefaultHeadingProvider
 import org.maplibre.compose.location.rememberLocationState
-import org.maplibre.compose.location.updateCamera
 import org.maplibre.compose.map.MaplibreMap
 import org.maplibre.compose.map.rememberMapState
 import org.maplibre.compose.material3.LocationIndicatorLayer
@@ -80,6 +80,7 @@ import org.maplibre.compose.sources.rememberGeoJsonSource
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.style.TransitionOptions
 import org.maplibre.compose.util.DpPadding
+import org.maplibre.compose.util.MaplibreComposable
 import org.maplibre.spatialk.geojson.LineString
 import org.maplibre.spatialk.geojson.Point
 import org.maplibre.spatialk.geojson.Position
@@ -96,6 +97,9 @@ import uniffi.ferrostar.UserLocation
  *
  * Navigating: Ferrostar's own location stream drives the trip and keeps running in the background.
  * The dot sits on the route, the map turns with the car and tilts, and panning pauses following.
+ *
+ * Either way the dot glides from fix to fix one frame at a time ([Glide]), and a following camera
+ * is placed on it every frame, so the two move together.
  */
 @Composable
 fun MapScreen(viewModel: MapViewModel = viewModel()) {
@@ -115,10 +119,12 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
       headingProvider = rememberDefaultHeadingProvider(),
     )
 
-  // How long the dot (and the camera following it) glides to each new fix: see smoothingDuration.
-  var browseSmoothing by remember { mutableStateOf(smoothingDuration(null)) }
-  val carLocation = navigating?.trip?.snappedUserLocation
-  val navSmoothing = rememberSmoothing(carLocation)
+  // Where the dot is headed: the car snapped onto the route while navigating, otherwise the latest
+  // GPS fix. While browsing the dot's direction comes from the compass instead (see LocationDot).
+  val dotTarget =
+    navigating?.trip?.snappedUserLocation?.let { Pose(it.position, it.courseOverGround?.degrees?.toDouble()) }
+      ?: locationState.lastLocation?.let { Pose(it.position, bearing = null) }
+  val glide = remember { Glide() }
 
   // Geometry objects are remembered so the map sources only rebuild when the line changes.
   val lineGeometry = navigating?.routeGeometry ?: previewRoute?.geometry
@@ -164,21 +170,7 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
           strokeWidth = const(3.dp),
         )
       }
-      if (carLocation != null) {
-        // While navigating, the dot is the car's position snapped onto the route, pointing along it.
-        LocationIndicatorLayer(
-          id = "nav-location",
-          location = carLocation.position,
-          bearing = carLocation.courseOverGround?.let { Bearing.North + it.degrees.toInt().degrees },
-          locationTransition = TransitionOptions(duration = navSmoothing),
-        )
-      } else {
-        LocationIndicatorLayer(
-          id = "user-location",
-          locationState = locationState,
-          locationTransition = TransitionOptions(duration = browseSmoothing),
-        )
-      }
+      LocationDot(glide, locationState, onRoute = isNavigating)
     }
 
   var following by rememberSaveable { mutableStateOf(true) }
@@ -228,43 +220,65 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
 
   // The planner routes from, and biases search toward, the latest fix. It never reroutes on its own.
   LocationTrackingEffect(locationState, trackBearing = false) {
-    browseSmoothing = smoothingDuration(previousLocation?.let { currentLocation.measuredAt - it.measuredAt })
     planner.updateOrigin(currentLocation.position)
   }
 
-  LocationTrackingEffect(locationState, enabled = following && !isNavigating, trackBearing = false) {
-    if (previousLocation == null) {
-      // First fix: jump from the California overview down to street level.
-      mapState.animateCamera(
-        CameraUpdate(center = currentLocation.position, zoom = MapDefaults.USER_ZOOM)
-      )
-    } else {
-      val gap = previousLocation?.let { currentLocation.measuredAt - it.measuredAt }
-      updateCamera(mapState, animation = glide(smoothingDuration(gap)), updateBearing = BearingUpdate.Ignore)
+  // While a programmatic camera move (zooming in, recentering) plays, following waits for it.
+  var cameraBusy by remember { mutableStateOf(false) }
+  suspend fun moveCamera(update: CameraUpdate) {
+    cameraBusy = true
+    try {
+      mapState.animateCamera(update)
+    } finally {
+      cameraBusy = false
     }
   }
 
-  // Starting a trip follows the car; ending one levels the map and faces north again.
+  // A camera move from following takes the camera away from any gesture that has started, so
+  // following holds off while a finger is on the map (a pan or pinch may be starting) and stops
+  // once a gesture moves the camera.
+  var touchingMap by remember { mutableStateOf(false) }
+
+  // Glide the dot to each new fix, and keep a following camera on it every frame: centered, and
+  // turned with the car while navigating. Between GPS and the route (a trip starting or ending)
+  // the dot jumps instead.
+  val navigatingNow by rememberUpdatedState(isNavigating)
+  var dotOnRoute by remember { mutableStateOf(isNavigating) }
+  LaunchedEffect(dotTarget) {
+    val target = dotTarget ?: return@LaunchedEffect
+    if (dotOnRoute != isNavigating) {
+      dotOnRoute = isNavigating
+      glide.reset()
+    }
+    glide.to(target) { pose ->
+      if (mapState.isCameraMoving && mapState.cameraMoveReason == CameraMoveReason.Gesture) following = false
+      if (!following || cameraBusy || touchingMap) return@to
+      val camera = mapState.cameraPosition
+      val bearing = if (navigatingNow) pose.bearing ?: camera.bearing else camera.bearing
+      mapState.setCameraPosition(camera.copy(center = pose.position, bearing = bearing))
+    }
+  }
+
+  // First fix: zoom from the California overview down to street level.
+  var zoomedToUser by rememberSaveable { mutableStateOf(false) }
+  val hasFix = locationState.lastLocation != null
+  LaunchedEffect(hasFix) {
+    val fix = locationState.lastLocation ?: return@LaunchedEffect
+    if (zoomedToUser || !following || isNavigating) return@LaunchedEffect
+    zoomedToUser = true
+    moveCamera(CameraUpdate(center = fix.position, zoom = MapDefaults.USER_ZOOM))
+  }
+
+  // Starting a trip tilts the map behind the car; ending one levels it and faces north again.
+  fun navigationView(pose: Pose?) =
+    CameraUpdate(center = pose?.position, zoom = NAV_ZOOM, bearing = pose?.bearing, pitch = NAV_PITCH)
   var wasNavigating by rememberSaveable { mutableStateOf(isNavigating) }
   LaunchedEffect(isNavigating) {
     if (isNavigating == wasNavigating) return@LaunchedEffect
     wasNavigating = isNavigating
     following = true
-    if (!isNavigating) mapState.animateCamera(CameraUpdate(bearing = 0.0, pitch = 0.0, zoom = MapDefaults.USER_ZOOM))
-  }
-
-  LaunchedEffect(carLocation, following) {
-    val car = carLocation ?: return@LaunchedEffect
-    if (!following) return@LaunchedEffect
-    mapState.animateCamera(
-      CameraUpdate(
-        center = car.position,
-        zoom = NAV_ZOOM,
-        bearing = car.courseOverGround?.degrees?.toDouble(),
-        pitch = NAV_PITCH,
-      ),
-      glide(navSmoothing),
-    )
+    if (isNavigating) moveCamera(navigationView(dotTarget))
+    else moveCamera(CameraUpdate(center = dotTarget?.position, bearing = 0.0, pitch = 0.0, zoom = MapDefaults.USER_ZOOM))
   }
 
   // Picking another destination (or none) cancels a trip that's still starting, or clears why it
@@ -319,7 +333,15 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
 
   Box(Modifier.fillMaxSize()) {
     MaplibreMap(
-      modifier = Modifier.fillMaxSize(),
+      modifier =
+        Modifier.fillMaxSize().pointerInput(Unit) {
+          // Watches without consuming, ahead of the map's own gesture handling.
+          awaitPointerEventScope {
+            while (true) {
+              touchingMap = awaitPointerEvent(PointerEventPass.Initial).changes.any { it.pressed }
+            }
+          }
+        },
       state = mapState,
       viewportInsets = viewportInsets,
       interactions = interactions,
@@ -329,7 +351,10 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
       navigating != null -> NavigationOverlay(
         state = navigating,
         following = following,
-        onRecenter = { following = true },
+        onRecenter = {
+          following = true
+          scope.launch { moveCamera(navigationView(glide.current)) }
+        },
         onMuteChange = navigator::setMuted,
         onStop = navigator::stop,
         topModifier = Modifier.onSizeChanged { navTopHeight = with(density) { it.height.toDp() } },
@@ -400,13 +425,10 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
               return@FloatingActionButton
             }
             following = true
-            val location = locationState.lastLocation ?: return@FloatingActionButton
+            val dot = glide.current ?: return@FloatingActionButton
             scope.launch {
-              mapState.animateCamera(
-                CameraUpdate(
-                  center = location.position,
-                  zoom = maxOf(mapState.cameraPosition.zoom, MapDefaults.USER_ZOOM),
-                )
+              moveCamera(
+                CameraUpdate(center = dot.position, zoom = maxOf(mapState.cameraPosition.zoom, MapDefaults.USER_ZOOM))
               )
             }
           },
@@ -438,29 +460,39 @@ private const val NAV_PITCH = 45.0
 private const val NAV_CAR_FROM_TOP = 0.45f
 private const val NAV_CAR_MAX_FROM_TOP = 0.6f
 
-/** A steady camera move that ends as the next fix arrives, so following never stops and starts. */
-private fun glide(duration: Duration) =
-  CameraAnimation.Ease {
-    this.duration = duration
-    easing = CubicBezier.Linear
-  }
 
 /**
- * The glide time for navigation fixes, from when each one arrives. (Browsing uses the fixes' own
- * timestamps instead; simulated drives don't have meaningful ones.)
+ * The user's dot, drawn where [glide] has it this frame. Its own composable so only it, not the
+ * whole map, recomposes on every frame. MapLibre's transitions are off for the position, since the
+ * glide already animates it.
+ *
+ * On the route ([onRoute]) it points along the road. Otherwise it points where the phone faces
+ * (or moves), with an accuracy circle.
  */
 @Composable
-private fun rememberSmoothing(fix: Any?): Duration {
-  val clock = remember { FixClock() }
-  return remember(fix) { smoothingDuration(clock.sinceLastFix()) }
-}
-
-private class FixClock {
-  private var lastFix: TimeSource.Monotonic.ValueTimeMark? = null
-
-  fun sinceLastFix(): Duration? {
-    val now = TimeSource.Monotonic.markNow()
-    return lastFix?.let { now - it }.also { lastFix = now }
+@MaplibreComposable
+private fun LocationDot(glide: Glide, locationState: LocationState, onRoute: Boolean) {
+  val pose = glide.current ?: return
+  val noTransition = TransitionOptions(duration = Duration.ZERO)
+  if (onRoute) {
+    LocationIndicatorLayer(
+      id = "nav-location",
+      location = pose.position,
+      bearing = pose.bearing?.let { Bearing.North + it.degrees },
+      locationTransition = noTransition,
+    )
+  } else {
+    LocationIndicatorLayer(
+      id = "user-location",
+      location = pose.position,
+      bearing = locationState.mostAccurateBearing(),
+      bearingAccuracy = locationState.mostAccurateBearingAccuracy(),
+      accuracyRadius = locationState.lastLocation?.horizontalAccuracy,
+      locationTransition = noTransition,
+      // The compass turns the dot many times a second; a short transition keeps that smooth.
+      bearingTransition = TransitionOptions(),
+      accuracyRadiusTransition = TransitionOptions(),
+    )
   }
 }
 
