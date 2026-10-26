@@ -97,7 +97,8 @@ class Navigator(context: Context, private val scope: CoroutineScope) {
       .addInterceptor { chain ->
         chain.proceed(chain.request().newBuilder().header("User-Agent", HerdServices.USER_AGENT).build())
       }
-      .callTimeout(Duration.ofSeconds(30))
+      // A reroute that stalls (signal lost mid-request) blocks the next attempt until it times out.
+      .callTimeout(Duration.ofSeconds(20))
       .build()
       .toOkHttpClientProvider()
 

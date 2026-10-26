@@ -55,6 +55,7 @@ import app.herd.shared.LocationProfiles
 import app.herd.shared.MapDefaults
 import app.herd.shared.isStationaryWander
 import app.herd.shared.planner.RouteStatus
+import com.stadiamaps.ferrostar.core.extensions.preferredUserLocation
 import kotlin.time.Duration
 import kotlinx.coroutines.launch
 import org.maplibre.compose.camera.CameraFit
@@ -123,12 +124,13 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
       headingProvider = rememberDefaultHeadingProvider(),
     )
 
-  // Where the dot is headed: the car snapped onto the route while navigating, otherwise the latest
-  // GPS fix that's a real move (see the LocationTrackingEffect below). While browsing, the dot's
-  // direction comes from the compass instead (see LocationDot).
+  // Where the dot is headed. While navigating: the car snapped onto the route, or its real GPS
+  // position once it leaves the route (snapped, it would sit on the old line until a new route
+  // arrives, however long that takes). Otherwise: the latest GPS fix that's a real move (see the
+  // LocationTrackingEffect below), with the direction from the compass (see LocationDot).
   var browseTarget by remember { mutableStateOf<Pose?>(null) }
   val dotTarget =
-    navigating?.trip?.snappedUserLocation?.let { Pose(it.position, it.courseOverGround?.degrees?.toDouble()) }
+    navigating?.trip?.preferredUserLocation()?.let { Pose(it.position, it.courseOverGround?.degrees?.toDouble()) }
       ?: browseTarget
   val glide = remember { Glide() }
 
@@ -493,7 +495,7 @@ private const val NAV_CAR_MAX_FROM_TOP = 0.6f
  * whole map, recomposes on every frame. MapLibre's transitions are off for the position, since the
  * glide already animates it.
  *
- * On the route ([onRoute]) it points along the road. Otherwise it points where the phone faces
+ * While navigating ([onRoute]) it points the way the car is going. Otherwise it points where the phone faces
  * (or moves), with an accuracy circle.
  */
 @Composable
