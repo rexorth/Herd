@@ -8,4 +8,14 @@
   <string name="location_open_settings">Open settings</string>
   <string name="location_services_off">Location services are turned off on this phone.</string>
   <string name="location_services_enable">Turn on</string>
+  <string name="search_hint">Search for a place</string>
+  <string name="search_clear">Clear search</string>
+  <string name="route_close">Close route</string>
+  <string name="route_finding">Finding a route…</string>
+  <string name="route_needs_location">Turn on location to get directions from where you are.</string>
+  <string name="route_retry">Try again</string>
+  <string name="avoid_highways">Avoid highways</string>
+  <string name="avoid_tolls">Avoid tolls</string>
+  <string name="search_exact_address">Find \u201c%1$s\u201d</string>
+  <string name="approximate_location">approximate location</string>
 </resources>

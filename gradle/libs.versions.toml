@@ -6,6 +6,11 @@ compose-multiplatform = "1.12.1"
 compose-material3 = "1.12.0-alpha03"
 androidx-activity = "1.13.0"
 maplibre-compose = "0.20.0"
+# Ktor, serialization and coroutines match the versions maplibre-compose 0.20.0 depends on.
+ktor = "3.6.0"
+kotlinx-serialization = "1.11.0"
+kotlinx-coroutines = "1.11.0"
+androidx-lifecycle = "2.11.0"
 
 android-compileSdk = "37"
 android-targetSdk = "36"
@@ -23,9 +28,19 @@ maplibre-compose-runtime-opengl = { module = "org.maplibre.compose:maplibre-comp
 maplibre-location = { module = "org.maplibre.compose:location", version.ref = "maplibre-compose" }
 # Google Play Services fused location backend for maplibre-compose's location provider.
 maplibre-location-gms = { module = "org.maplibre.compose:location-runtime-gms", version.ref = "maplibre-compose" }
+androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidx-lifecycle" }
+ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
+ktor-client-contentNegotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
+ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
+ktor-client-darwin = { module = "io.ktor:ktor-client-darwin", version.ref = "ktor" }
+ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
+ktor-serialization-kotlinxJson = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 android-kmp-library = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
