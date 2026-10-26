@@ -17,7 +17,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -51,6 +53,7 @@ import app.herd.android.R
 import app.herd.android.nav.NavUiState
 import app.herd.shared.LocationProfiles
 import app.herd.shared.MapDefaults
+import app.herd.shared.isStationaryWander
 import app.herd.shared.planner.RouteStatus
 import kotlin.time.Duration
 import kotlinx.coroutines.launch
@@ -86,6 +89,7 @@ import org.maplibre.spatialk.geojson.Point
 import org.maplibre.spatialk.geojson.Position
 import org.maplibre.spatialk.units.Bearing
 import org.maplibre.spatialk.units.extensions.degrees
+import org.maplibre.spatialk.units.extensions.inMeters
 import uniffi.ferrostar.UserLocation
 
 /**
@@ -120,10 +124,12 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
     )
 
   // Where the dot is headed: the car snapped onto the route while navigating, otherwise the latest
-  // GPS fix. While browsing the dot's direction comes from the compass instead (see LocationDot).
+  // GPS fix that's a real move (see the LocationTrackingEffect below). While browsing, the dot's
+  // direction comes from the compass instead (see LocationDot).
+  var browseTarget by remember { mutableStateOf<Pose?>(null) }
   val dotTarget =
     navigating?.trip?.snappedUserLocation?.let { Pose(it.position, it.courseOverGround?.degrees?.toDouble()) }
-      ?: locationState.lastLocation?.let { Pose(it.position, bearing = null) }
+      ?: browseTarget
   val glide = remember { Glide() }
 
   // Geometry objects are remembered so the map sources only rebuild when the line changes.
@@ -185,7 +191,7 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
   var navBottomHeight by remember { mutableStateOf(0.dp) }
   var arrivedCardHeight by remember { mutableStateOf(0.dp) }
   val cardShown = plan.destination != null && !inTrip
-  val topInset = with(density) { WindowInsets.safeDrawing.getTop(this).toDp() }
+  val topInset = with(density) { BarsAndCutout.getTop(this).toDp() }
   val screenHeight = with(density) { LocalWindowInfo.current.containerSize.height.toDp() }
   val viewportInsets =
     when {
@@ -219,8 +225,20 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
   }
 
   // The planner routes from, and biases search toward, the latest fix. It never reroutes on its own.
+  // The dot only moves for real movement: GPS wander around a phone that's sitting still would
+  // wobble it and keep the map redrawing (and the keyboard stuttering) for nothing.
   LocationTrackingEffect(locationState, trackBearing = false) {
     planner.updateOrigin(currentLocation.position)
+    val shown = browseTarget?.position
+    val wander =
+      shown != null &&
+        isStationaryWander(
+          shown,
+          currentLocation.position,
+          accuracyMeters = currentLocation.horizontalAccuracy?.inMeters,
+          speedMetersPerSecond = currentLocation.distancePerSecond?.inMeters,
+        )
+    if (!wander) browseTarget = Pose(currentLocation.position, bearing = null)
   }
 
   // While a programmatic camera move (zooming in, recentering) plays, following waits for it.
@@ -378,7 +396,7 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
       else -> {
         Column(
           Modifier.align(Alignment.TopCenter)
-            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+            .windowInsetsPadding(BarsAndCutout.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
             .padding(16.dp)
             .fillMaxWidth()
         ) {
@@ -453,6 +471,15 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
     }
   }
 }
+
+/**
+ * The status and navigation bars and any display cutout: what panels at the screen edges stay
+ * clear of. Unlike `WindowInsets.safeDrawing` it leaves out the keyboard, which only ever covers
+ * the map. Reading keyboard insets would re-lay out the screen on every frame of the keyboard's
+ * slide-in, and the keyboard animates in step with those frames.
+ */
+internal val BarsAndCutout: WindowInsets
+  @Composable get() = WindowInsets.systemBars.union(WindowInsets.displayCutout)
 
 private const val NAV_ZOOM = 16.5
 private const val NAV_PITCH = 45.0

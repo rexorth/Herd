@@ -2,6 +2,8 @@ package app.herd.shared
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import org.maplibre.spatialk.geojson.Position
@@ -47,5 +49,25 @@ class LocationSmoothingTest {
     assertEquals(355.0, interpolateBearing(10.0, 340.0, 0.5), absoluteTolerance = 1e-9)
     assertEquals(45.0, interpolateBearing(0.0, 90.0, 0.5), absoluteTolerance = 1e-9)
     assertEquals(90.0, interpolateBearing(0.0, 90.0, 1.0), absoluteTolerance = 1e-9)
+  }
+
+  @Test
+  fun holdsStillForWanderWithinAccuracy() {
+    val desk = Position(longitude = -119.6982, latitude = 34.4208)
+    // About 11 m north.
+    val drifted = Position(longitude = -119.6982, latitude = 34.4209)
+    assertTrue(isStationaryWander(desk, drifted, accuracyMeters = 20.0, speedMetersPerSecond = 0.2))
+    assertTrue(isStationaryWander(desk, drifted, accuracyMeters = 20.0, speedMetersPerSecond = null))
+    // An accurate fix 11 m away is a real move.
+    assertFalse(isStationaryWander(desk, drifted, accuracyMeters = 4.0, speedMetersPerSecond = 0.2))
+    // Unknown accuracy still ignores tiny wander.
+    assertTrue(isStationaryWander(desk, Position(longitude = -119.69822, latitude = 34.42081), null, null))
+  }
+
+  @Test
+  fun movingAtSpeedAlwaysCounts() {
+    val a = Position(longitude = -119.6982, latitude = 34.4208)
+    val b = Position(longitude = -119.69821, latitude = 34.42081)
+    assertFalse(isStationaryWander(a, b, accuracyMeters = 20.0, speedMetersPerSecond = 12.0))
   }
 }

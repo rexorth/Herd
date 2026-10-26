@@ -1,5 +1,6 @@
 package app.herd.shared
 
+import app.herd.shared.search.distanceKm
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -41,3 +42,23 @@ fun interpolateBearing(from: Double, to: Double, fraction: Double): Double {
   val delta = ((to - from + 540.0) % 360.0) - 180.0
   return ((from + delta * fraction) % 360.0 + 360.0) % 360.0
 }
+
+/**
+ * Whether [next] is only GPS wander around a phone that isn't going anywhere: closer to the
+ * position on screen ([shown]) than the fix's own accuracy, at walking pace or slower. Indoors or
+ * parked, fixes drift by several meters; following them would wobble the dot and keep the map
+ * redrawing for nothing. Unknown accuracy counts as [MIN_WANDER_METERS] and unknown speed as slow.
+ */
+fun isStationaryWander(
+  shown: Position,
+  next: Position,
+  accuracyMeters: Double?,
+  speedMetersPerSecond: Double?,
+): Boolean {
+  if (speedMetersPerSecond != null && speedMetersPerSecond > WALKING_SPEED_MPS) return false
+  val radius = maxOf(accuracyMeters ?: 0.0, MIN_WANDER_METERS)
+  return distanceKm(shown, next) * 1000.0 < radius
+}
+
+private const val WALKING_SPEED_MPS = 1.0
+private const val MIN_WANDER_METERS = 5.0
