@@ -60,18 +60,21 @@ class PhotonClientTest {
           subtitle = "San Luis Obispo, California",
           position = Position(longitude = -120.849901, latitude = 35.3658075),
           osmId = 5193369,
+          locality = "San Luis Obispo, California",
         ),
         Place(
           name = "Morro Bay State Park",
           subtitle = "Morro Bay, California",
           position = Position(longitude = -120.8260162, latitude = 35.3427682),
           osmId = 186175,
+          locality = "Morro Bay, California",
         ),
         Place(
           name = "Morro Bay Lane",
           subtitle = "Ventura, California",
           position = Position(longitude = -119.2139985, latitude = 34.2620524),
           osmId = 479210048,
+          locality = "Ventura, California",
         ),
       ),
       places,
@@ -88,6 +91,9 @@ class PhotonClientTest {
     assertEquals("/reverse", seen.single().data.url.encodedPath)
     assertEquals("738 Anacapa Street", place?.name)
     assertEquals("Santa Barbara, California", place?.subtitle)
+    assertEquals("738", place?.houseNumber)
+    assertEquals("Anacapa Street", place?.street)
+    assertEquals("Santa Barbara, California", place?.locality)
   }
 
   @Test

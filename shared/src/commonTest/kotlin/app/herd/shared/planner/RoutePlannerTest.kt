@@ -4,6 +4,7 @@ import app.herd.shared.routing.Route
 import app.herd.shared.routing.RouteOptions
 import app.herd.shared.routing.Router
 import app.herd.shared.routing.RoutingException
+import app.herd.shared.search.AddressLocator
 import app.herd.shared.search.Place
 import app.herd.shared.search.PlaceSearch
 import kotlin.test.Test
@@ -65,17 +66,39 @@ class RoutePlannerTest {
     }
   }
 
+  private class FakeLocator : AddressLocator {
+    val requests = mutableListOf<String>()
+    var matches: List<Place> = emptyList()
+
+    override suspend fun locate(address: String): List<Place> {
+      requests += address
+      return matches
+    }
+  }
+
   private val search = FakeSearch()
+  private val locator = FakeLocator()
+  private val ventura = Position(longitude = -119.29, latitude = 34.28)
+  private val wrongHouse =
+    Place("Seeds Early Learning", "1239 East Main Street, Ventura, California", ventura, houseNumber = "1239", street = "East Main Street")
+  private val westMain =
+    Place("123 W Main St", "Ventura, CA", Position(longitude = -119.3025, latitude = 34.2813), houseNumber = "123", street = "W Main St", isApproximate = true)
+  private val eastMain =
+    Place("123 E Main St", "Ventura, CA", Position(longitude = -119.2982, latitude = 34.2808), houseNumber = "123", street = "E Main St", isApproximate = true)
+
   private val router = FakeRouter()
 
   /**
    * Runs [block] with a planner on the test dispatcher. Not backgroundScope: advanceUntilIdle()
    * skips background work, and the planner's search collector never completes on its own.
    */
-  private fun plannerTest(block: suspend TestScope.(RoutePlanner) -> Unit) = runTest {
+  private fun plannerTest(
+    locator: AddressLocator? = null,
+    block: suspend TestScope.(RoutePlanner) -> Unit,
+  ) = runTest {
     val job = Job()
     try {
-      block(RoutePlanner(this + job, search, router))
+      block(RoutePlanner(this + job, search, router, locator))
     } finally {
       job.cancel()
     }
@@ -250,6 +273,146 @@ class RoutePlannerTest {
     planner.clear()
 
     assertEquals(PlannerState(options = RouteOptions(avoidTolls = true)), planner.state.value)
+  }
+
+  @Test
+  fun enterOnAnAddressSearchKnowsSkipsTheLookup() = plannerTest(locator) { planner ->
+    planner.updateOrigin(ventura)
+    val mapped = Place("123 Main Street", "Ventura, California", ventura, houseNumber = "123", street = "Main Street")
+    search.results = listOf(wrongHouse, mapped)
+    planner.onQueryChanged("123 main st")
+    planner.submitQuery()
+    advanceUntilIdle()
+
+    assertEquals(mapped, planner.state.value.destination)
+    assertTrue(locator.requests.isEmpty())
+  }
+
+  @Test
+  fun enterOnAMissingAddressLooksItUpInMyTown() = plannerTest(locator) { planner ->
+    planner.updateOrigin(ventura)
+    search.results = listOf(wrongHouse)
+    search.reverseResult = Place("Ventura", null, ventura, locality = "Ventura, California")
+    locator.matches = listOf(westMain)
+    planner.onQueryChanged("123 w main st")
+    planner.submitQuery()
+    advanceUntilIdle()
+
+    assertEquals(listOf("123 w main st, Ventura, California"), locator.requests)
+    assertEquals(westMain, planner.state.value.destination)
+    assertEquals(westMain.position, router.calls.single().second)
+  }
+
+  @Test
+  fun addressWithATownIsLookedUpAsTyped() = plannerTest(locator) { planner ->
+    planner.updateOrigin(here)
+    search.results = listOf(wrongHouse)
+    locator.matches = listOf(westMain)
+    planner.onQueryChanged("123 w main st, ventura")
+    planner.submitQuery()
+    advanceUntilIdle()
+
+    assertEquals(listOf("123 w main st, ventura"), locator.requests)
+  }
+
+  @Test
+  fun sameAddressInAnotherTownIsNotTheTypedHouse() = plannerTest(locator) { planner ->
+    // Found live: from Ventura, "123 w main st" went to 123 Main Street, Huntington Beach.
+    planner.updateOrigin(ventura)
+    val huntingtonBeach =
+      Place("W&R Studios HQ", "123 Main Street, Huntington Beach, California",
+        Position(longitude = -117.999, latitude = 33.658), houseNumber = "123", street = "Main Street",
+        locality = "Huntington Beach, California")
+    search.results = listOf(huntingtonBeach)
+    search.reverseResult = Place("Ventura", null, ventura, locality = "Ventura, California")
+    locator.matches = listOf(westMain)
+    planner.onQueryChanged("123 w main st")
+    advanceUntilIdle()
+    assertTrue(planner.state.value.offerExactAddress)
+
+    planner.submitQuery()
+    advanceUntilIdle()
+
+    assertEquals(westMain, planner.state.value.destination)
+  }
+
+  @Test
+  fun typedTownMustMatch() = plannerTest(locator) { planner ->
+    planner.updateOrigin(here)
+    val elSegundo =
+      Place("123 Main Street", "El Segundo, California", Position(longitude = -118.416, latitude = 33.92),
+        houseNumber = "123", street = "Main Street", locality = "El Segundo, California")
+    search.results = listOf(elSegundo)
+    locator.matches = listOf(westMain)
+    planner.onQueryChanged("123 main st, ventura")
+    planner.submitQuery()
+    advanceUntilIdle()
+
+    assertEquals(listOf("123 main st, ventura"), locator.requests)
+    assertEquals(westMain, planner.state.value.destination)
+  }
+
+  @Test
+  fun severalMatchingStreetsBecomeSuggestions() = plannerTest(locator) { planner ->
+    planner.updateOrigin(ventura)
+    search.results = listOf(wrongHouse)
+    locator.matches = listOf(westMain, eastMain)
+    planner.onQueryChanged("123 main st, ventura")
+    planner.submitQuery()
+    advanceUntilIdle()
+
+    assertEquals(null, planner.state.value.destination)
+    assertEquals(listOf(westMain, eastMain), planner.state.value.suggestions)
+    assertTrue(router.calls.isEmpty())
+  }
+
+  @Test
+  fun addressNobodyKnowsExplains() = plannerTest(locator) { planner ->
+    planner.updateOrigin(ventura)
+    search.results = listOf(wrongHouse)
+    planner.onQueryChanged("4123 xyzzy blvd, ventura")
+    planner.submitQuery()
+    advanceUntilIdle()
+
+    assertEquals(null, planner.state.value.destination)
+    assertTrue(planner.state.value.searchError!!.startsWith("Couldn't find"))
+    // Search's other streets aren't useful once we know the address doesn't exist.
+    assertTrue(planner.state.value.suggestions.isEmpty())
+    // Don't route to a different house just because it was the top suggestion.
+    assertTrue(router.calls.isEmpty())
+  }
+
+  @Test
+  fun placeNamesNeverUseTheAddressLookup() = plannerTest(locator) { planner ->
+    search.results = listOf(morroBay)
+    planner.onQueryChanged("morro bay")
+    advanceUntilIdle()
+    assertFalse(planner.state.value.offerExactAddress)
+
+    planner.submitQuery()
+    advanceUntilIdle()
+
+    assertEquals(morroBay, planner.state.value.destination)
+    assertTrue(locator.requests.isEmpty())
+  }
+
+  @Test
+  fun findRowOffersOnlyForAddressesSearchLacks() = plannerTest(locator) { planner ->
+    search.resultsByQuery =
+      mapOf(
+        "123 main st" to listOf(wrongHouse),
+        "1239 east main" to listOf(wrongHouse),
+      )
+    planner.onQueryChanged("123 main st")
+    advanceUntilIdle()
+    assertTrue(planner.state.value.offerExactAddress)
+
+    planner.onQueryChanged("1239 east main")
+    advanceUntilIdle()
+    assertFalse(planner.state.value.offerExactAddress)
+
+    planner.onQueryChanged("morro")
+    assertFalse(planner.state.value.offerExactAddress)
   }
 
   @Test

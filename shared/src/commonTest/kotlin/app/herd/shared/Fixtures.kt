@@ -18,4 +18,13 @@ internal object Fixtures {
 
   /** `POST /route` Santa Barbara → Honolulu: HTTP 400. */
   const val VALHALLA_ERROR_TOO_FAR = """{"error_code":154,"error":"Path distance exceeds the max distance limit: 1500000 meters","status_code":400,"status":"Bad Request"}"""
+
+  /** Census `onelineaddress` "123 main st, ventura, ca": two streets match (W and E Main St). */
+  const val CENSUS_TWO_MATCHES = """{"result":{"input":{"address":{"address":"123 main st, ventura, ca"},"benchmark":{"isDefault":true,"benchmarkDescription":"Public Address Ranges - Current Benchmark","id":"4","benchmarkName":"Public_AR_Current"}},"addressMatches":[{"tigerLine":{"side":"R","tigerLineId":"110051072"},"coordinates":{"x":-119.302510777455,"y":34.281306762183},"addressComponents":{"zip":"93001","streetName":"MAIN","preType":"","city":"VENTURA","preDirection":"W","suffixDirection":"","fromAddress":"109","state":"CA","suffixType":"ST","toAddress":"199","suffixQualifier":"","preQualifier":""},"matchedAddress":"123 W MAIN ST, VENTURA, CA, 93001"},{"tigerLine":{"side":"L","tigerLineId":"110040923"},"coordinates":{"x":-119.298233173103,"y":34.28085537205},"addressComponents":{"zip":"93001","streetName":"MAIN","preType":"","city":"VENTURA","preDirection":"E","suffixDirection":"","fromAddress":"119","state":"CA","suffixType":"ST","toAddress":"211","suffixQualifier":"","preQualifier":""},"matchedAddress":"123 E MAIN ST, VENTURA, CA, 93001"}]}}"""
+
+  /** Census `onelineaddress` "1200 state st 93101": one match. */
+  const val CENSUS_ONE_MATCH = """{"result":{"input":{"address":{"address":"1200 state st 93101"},"benchmark":{"isDefault":true,"benchmarkDescription":"Public Address Ranges - Current Benchmark","id":"4","benchmarkName":"Public_AR_Current"}},"addressMatches":[{"tigerLine":{"side":"R","tigerLineId":"108605247"},"coordinates":{"x":-119.704450494996,"y":34.423444839004},"addressComponents":{"zip":"93101","streetName":"STATE","preType":"","city":"SANTA BARBARA","preDirection":"","suffixDirection":"","fromAddress":"1200","state":"CA","suffixType":"ST","toAddress":"1298","suffixQualifier":"","preQualifier":""},"matchedAddress":"1200 STATE ST, SANTA BARBARA, CA, 93101"}]}}"""
+
+  /** Census `onelineaddress` for a street that doesn't exist. */
+  const val CENSUS_NO_MATCH = """{"result":{"input":{"address":{"address":"4123 xyzzy blvd, ventura, ca"},"benchmark":{"isDefault":true,"benchmarkDescription":"Public Address Ranges - Current Benchmark","id":"4","benchmarkName":"Public_AR_Current"}},"addressMatches":[]}}"""
 }

@@ -50,7 +50,7 @@ fun RouteCard(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
           )
-          destination.subtitle?.let {
+          placeContext(destination)?.let {
             Text(
               it,
               style = MaterialTheme.typography.bodyMedium,

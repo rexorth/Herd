@@ -78,9 +78,6 @@ class PhotonClient(
   }
 }
 
-/** "1200 state st", "421 San Andres": queries that start with a house number. */
-internal fun isStreetAddress(query: String): Boolean = query.trimStart().firstOrNull()?.isDigit() == true
-
 internal fun PhotonFeature.toPlace(): Place? {
   val coordinates = geometry.coordinates
   if (coordinates.size < 2) return null
@@ -101,6 +98,9 @@ internal fun PhotonFeature.toPlace(): Place? {
     subtitle = subtitle,
     position = Position(longitude = coordinates[0], latitude = coordinates[1]),
     osmId = p.osmId,
+    houseNumber = p.housenumber,
+    street = p.street,
+    locality = listOfNotNull(p.city ?: p.county, p.state).joinToString(", ").ifEmpty { null },
   )
 }
 

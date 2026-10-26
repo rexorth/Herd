@@ -3,6 +3,7 @@ package app.herd.android.ui
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -91,7 +93,9 @@ fun SearchBar(
       )
     }
 
-    val hasContent = state.suggestions.isNotEmpty() || state.isSearching || state.searchError != null
+    val hasContent =
+      state.suggestions.isNotEmpty() || state.isSearching || state.searchError != null ||
+        state.offerExactAddress
     if (focused && hasContent) {
       Card(Modifier.fillMaxWidth()) {
         if (state.isSearching) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -101,6 +105,11 @@ fun SearchBar(
             color = MaterialTheme.colorScheme.error,
             modifier = Modifier.padding(16.dp),
           )
+        }
+        // Search may not have this house; this row looks the address up properly (same as Enter).
+        if (state.offerExactAddress) {
+          FindAddressRow(state.query.trim(), onClick = onSubmit)
+          if (state.suggestions.isNotEmpty()) HorizontalDivider()
         }
         state.suggestions.forEachIndexed { index, place ->
           if (index > 0) HorizontalDivider()
@@ -115,6 +124,28 @@ fun SearchBar(
 }
 
 @Composable
+private fun FindAddressRow(address: String, onClick: () -> Unit) {
+  Row(
+    Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 14.dp),
+    horizontalArrangement = Arrangement.spacedBy(12.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Icon(
+      painterResource(R.drawable.ic_search),
+      contentDescription = null,
+      tint = MaterialTheme.colorScheme.primary,
+    )
+    Text(
+      stringResource(R.string.search_exact_address, address),
+      style = MaterialTheme.typography.bodyLarge,
+      color = MaterialTheme.colorScheme.primary,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+    )
+  }
+}
+
+@Composable
 private fun SuggestionRow(place: Place, onClick: () -> Unit) {
   Column(
     Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp)
@@ -125,7 +156,7 @@ private fun SuggestionRow(place: Place, onClick: () -> Unit) {
       maxLines = 1,
       overflow = TextOverflow.Ellipsis,
     )
-    place.subtitle?.let {
+    placeContext(place)?.let {
       Text(
         it,
         style = MaterialTheme.typography.bodyMedium,
@@ -135,4 +166,12 @@ private fun SuggestionRow(place: Place, onClick: () -> Unit) {
       )
     }
   }
+}
+
+/** The line under a place's name: its area, plus "approximate location" for estimated addresses. */
+@Composable
+internal fun placeContext(place: Place): String? {
+  if (!place.isApproximate) return place.subtitle
+  val approximate = stringResource(R.string.approximate_location)
+  return place.subtitle?.let { "$it · $approximate" } ?: approximate
 }

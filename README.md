@@ -21,8 +21,11 @@ routes that guide you back on course when you leave them. Android first (Kotlin)
 - Enter searches exactly what's typed and goes to the top result. Searches that start with a house
   number are ranked mostly by distance; place names keep their usual ranking so far-away
   destinations ("Las Vegas") still come first.
-- OpenStreetMap doesn't have every US house number. When an address is missing, long-press its
-  spot on the map instead.
+- OpenStreetMap doesn't have every US house number. When search doesn't have the exact house you
+  typed (in your town, or the town you typed), a "Find" row and Enter look it up in the US Census
+  geocoder, which estimates the spot along the street. Those destinations are marked
+  "approximate location". If the address could be on more than one street (W vs E Main St), you
+  pick. Long-pressing the spot on the map always works too.
 
 ### Search and routing servers
 
@@ -32,8 +35,9 @@ During development Herd uses free public servers with no API key:
 |---|---|---|
 | Search ([Photon](https://github.com/komoot/photon)) | `photon.komoot.io` | Komoot's public instance. Fair use only. |
 | Routing ([Valhalla](https://github.com/valhalla/valhalla)) | `valhalla1.openstreetmap.de` | FOSSGIS's public instance. Refuses routes over 1,500 km. |
+| Exact US addresses ([Census Geocoder](https://geocoding.geo.census.gov/geocoder/)) | `geocoding.geo.census.gov` | US Census Bureau, public-domain data. Only on Enter/Find, never while typing. |
 
-Both have usage limits, so the app debounces typing (300 ms, 3+ characters), cancels superseded
+They have usage limits, so the app debounces typing (300 ms, 3+ characters), cancels superseded
 requests, and only routes when you pick a destination or change an option. Base URLs live in
 `shared/.../net/HerdServices.kt`; pointing them at self-hosted servers needs no other change.
 
@@ -43,7 +47,7 @@ requests, and only routes when you pick a destination or change an option. Base 
 androidApp/   Android app: Compose UI (MapScreen, SearchBar, RouteCard), MapViewModel
 shared/       Kotlin Multiplatform module (Android + iOS):
   net/          HTTP client setup, service URLs
-  search/       Photon client and Place model
+  search/       Photon and Census clients, address matching, Place model
   routing/      Valhalla client, polyline decoding, Route model
   planner/      RoutePlanner: search-and-route state shared by both apps
   format/       distance and duration text
@@ -74,5 +78,5 @@ The iOS targets in `shared/` only build on macOS with Xcode; other hosts skip th
 ## Attribution
 
 Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL), tiles by
-OpenFreeMap, schema © OpenMapTiles. Search by Photon (komoot), routing by Valhalla (FOSSGIS
-server). The map's attribution button shows the map attribution; keep it visible.
+OpenFreeMap, schema © OpenMapTiles. Search by Photon (komoot), address estimates from the US
+Census Bureau geocoder, routing by Valhalla (FOSSGIS server). The map's attribution button shows the map attribution; keep it visible.
