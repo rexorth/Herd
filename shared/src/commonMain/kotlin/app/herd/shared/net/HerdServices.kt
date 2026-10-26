@@ -18,5 +18,5 @@ object HerdServices {
   const val VALHALLA_BASE_URL = "https://valhalla1.openstreetmap.de"
 
   /** Identifies the app to the public servers, as their usage policies ask. */
-  const val USER_AGENT = "Herd/0.2 (+https://github.com/rexorth/Herd)"
+  const val USER_AGENT = "Herd/0.3 (+https://github.com/rexorth/Herd)"
 }

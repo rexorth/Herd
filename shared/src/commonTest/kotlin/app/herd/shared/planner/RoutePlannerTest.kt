@@ -1,5 +1,6 @@
 package app.herd.shared.planner
 
+import app.herd.shared.history.RecentPlaceStore
 import app.herd.shared.routing.Route
 import app.herd.shared.routing.RouteOptions
 import app.herd.shared.routing.Router
@@ -14,6 +15,9 @@ import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.plus
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -76,6 +80,15 @@ class RoutePlannerTest {
     }
   }
 
+  private class FakeRecents(initial: List<Place> = emptyList()) : RecentPlaceStore {
+    val places = MutableStateFlow(initial)
+    override val recent: Flow<List<Place>> = places
+
+    override suspend fun record(place: Place) = places.update { listOf(place) + (it - place) }
+
+    override suspend fun remove(place: Place) = places.update { it - place }
+  }
+
   private val search = FakeSearch()
   private val locator = FakeLocator()
   private val ventura = Position(longitude = -119.29, latitude = 34.28)
@@ -94,11 +107,12 @@ class RoutePlannerTest {
    */
   private fun plannerTest(
     locator: AddressLocator? = null,
+    recents: RecentPlaceStore? = null,
     block: suspend TestScope.(RoutePlanner) -> Unit,
   ) = runTest {
     val job = Job()
     try {
-      block(RoutePlanner(this + job, search, router, locator))
+      block(RoutePlanner(this + job, search, router, locator, recents))
     } finally {
       job.cancel()
     }
@@ -413,6 +427,71 @@ class RoutePlannerTest {
 
     planner.onQueryChanged("morro")
     assertFalse(planner.state.value.offerExactAddress)
+  }
+
+  @Test
+  fun recentsShowInState() {
+    val recents = FakeRecents(listOf(morroBay))
+    plannerTest(recents = recents) { planner ->
+      runCurrent()
+      assertEquals(listOf(morroBay), planner.state.value.recents)
+    }
+  }
+
+  @Test
+  fun pickedSuggestionsAndEnterResultsAreRemembered() {
+    val recents = FakeRecents()
+    val pismo = Place("Pismo Beach", "San Luis Obispo, California", Position(longitude = -120.64, latitude = 35.14))
+    plannerTest(recents = recents) { planner ->
+      planner.updateOrigin(here)
+      planner.selectPlace(morroBay)
+      advanceUntilIdle()
+      search.results = listOf(pismo)
+      planner.onQueryChanged("pismo")
+      planner.submitQuery()
+      advanceUntilIdle()
+
+      assertEquals(listOf(pismo, morroBay), planner.state.value.recents)
+    }
+  }
+
+  @Test
+  fun droppedPinsAreNotRemembered() {
+    val recents = FakeRecents()
+    plannerTest(recents = recents) { planner ->
+      planner.updateOrigin(here)
+      search.reverseResult = Place("738 Anacapa Street", "Santa Barbara, California", here)
+      planner.pickPoint(here)
+      advanceUntilIdle()
+
+      assertTrue(planner.state.value.recents.isEmpty())
+    }
+  }
+
+  @Test
+  fun removingARecent() {
+    val recents = FakeRecents(listOf(morroBay))
+    plannerTest(recents = recents) { planner ->
+      planner.removeRecent(morroBay)
+      advanceUntilIdle()
+
+      assertTrue(planner.state.value.recents.isEmpty())
+    }
+  }
+
+  @Test
+  fun clearKeepsRecents() {
+    val recents = FakeRecents(listOf(morroBay))
+    plannerTest(recents = recents) { planner ->
+      planner.updateOrigin(here)
+      planner.selectPlace(morroBay)
+      advanceUntilIdle()
+
+      planner.clear()
+
+      assertEquals(listOf(morroBay), planner.state.value.recents)
+      assertEquals(null, planner.state.value.destination)
+    }
   }
 
   @Test

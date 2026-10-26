@@ -1,5 +1,6 @@
 package app.herd.shared.planner
 
+import app.herd.shared.history.RecentPlaceStore
 import app.herd.shared.routing.Route
 import app.herd.shared.routing.RouteOptions
 import app.herd.shared.routing.Router
@@ -41,6 +42,8 @@ data class PlannerState(
   val destination: Place? = null,
   val options: RouteOptions = RouteOptions(),
   val route: RouteStatus = RouteStatus.None,
+  /** Destinations picked from search before, newest first. The UI shows them while the box is empty. */
+  val recents: List<Place> = emptyList(),
 )
 
 sealed interface RouteStatus {
@@ -71,9 +74,17 @@ class RoutePlanner(
   private val router: Router,
   /** Finds street addresses [search] doesn't have; used only on Enter or the "Find" row. Null turns it off. */
   private val addressLocator: AddressLocator? = null,
+  /** Remembers picked destinations. Null turns recents off. */
+  private val recentPlaces: RecentPlaceStore? = null,
 ) {
   private val mutableState = MutableStateFlow(PlannerState())
   val state: StateFlow<PlannerState> = mutableState.asStateFlow()
+
+  init {
+    recentPlaces?.let { store ->
+      scope.launch { store.recent.collect { places -> mutableState.update { it.copy(recents = places) } } }
+    }
+  }
 
   private var origin: Position? = null
   /** The pending or running search. Every user action that changes what to search cancels it. */
@@ -152,10 +163,17 @@ class RoutePlanner(
     if (mutableState.value.route == RouteStatus.NeedsLocation) requestRoute()
   }
 
+  /** Routes to a suggestion or a recent place. */
   fun selectPlace(place: Place) {
     searchJob?.cancel()
     reverseJob?.cancel()
     setDestination(place)
+    remember(place)
+  }
+
+  fun removeRecent(place: Place) {
+    val store = recentPlaces ?: return
+    scope.launch { bestEffort { store.remove(place) } }
   }
 
   /** Route to a point picked on the map. Its name fills in once reverse geocoding answers. */
@@ -193,12 +211,12 @@ class RoutePlanner(
 
   fun retry() = requestRoute()
 
-  /** Drops the destination and route. Route options stay as the user set them. */
+  /** Drops the destination and route. Route options and recents stay. */
   fun clear() {
     searchJob?.cancel()
     routeJob?.cancel()
     reverseJob?.cancel()
-    mutableState.update { PlannerState(options = it.options) }
+    mutableState.update { PlannerState(options = it.options, recents = it.recents) }
   }
 
   private fun setDestination(place: Place) {
@@ -218,6 +236,24 @@ class RoutePlanner(
   private fun goTo(place: Place) {
     reverseJob?.cancel()
     setDestination(place)
+    remember(place)
+  }
+
+  /** Adds a destination picked from search to the recents. Dropped pins aren't searches, so they don't go here. */
+  private fun remember(place: Place) {
+    val store = recentPlaces ?: return
+    scope.launch { bestEffort { store.record(place) } }
+  }
+
+  /** Recents are a convenience: if storage fails, search and routing carry on without them. */
+  private suspend fun bestEffort(block: suspend () -> Unit) {
+    try {
+      block()
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      // Nothing to show the user; the list just doesn't change.
+    }
   }
 
   /** Searches [query] and shows the results as suggestions. Returns them, or null if the search failed. */
