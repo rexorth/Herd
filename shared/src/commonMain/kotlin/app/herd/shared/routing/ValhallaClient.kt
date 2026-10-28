@@ -36,13 +36,7 @@ class ValhallaClient(
     val request =
       ValhallaRequest(
         locations = listOf(ValhallaLocation(from), ValhallaLocation(to)),
-        costingOptions =
-          ValhallaCostingOptions(
-            ValhallaAutoOptions(
-              useHighways = if (options.avoidHighways) 0.0 else null,
-              useTolls = if (options.avoidTolls) 0.0 else null,
-            )
-          ),
+        costingOptions = options.toCostingOptions(),
       )
     val response =
       http.post("$baseUrl/route") {
@@ -52,8 +46,7 @@ class ValhallaClient(
     // Valhalla reports problems (no road nearby, route too long) as a JSON error with a 4xx status.
     val text = response.bodyAsText()
     if (!response.status.isSuccess()) {
-      val error = runCatching { HerdJson.decodeFromString<ValhallaError>(text) }.getOrNull()
-      throw RoutingException(error?.error ?: "Routing failed (HTTP ${response.status.value})")
+      throw RoutingException(valhallaErrorMessage(text) ?: "Routing failed (HTTP ${response.status.value})")
     }
     val trip =
       try {
@@ -64,6 +57,10 @@ class ValhallaClient(
     return trip.toRoute()
   }
 }
+
+/** Valhalla's explanation in an error response ("No path could be found for input"), if it gave one. */
+fun valhallaErrorMessage(responseBody: String): String? =
+  runCatching { HerdJson.decodeFromString<ValhallaError>(responseBody).error }.getOrNull()
 
 internal fun ValhallaTrip.toRoute(): Route {
   // Each leg's shape starts where the previous one ended; drop the repeated point.
@@ -84,13 +81,23 @@ internal fun ValhallaTrip.toRoute(): Route {
   )
 }
 
+/** Valhalla's preference scale runs 0 to 1; 0 avoids a road type as much as possible. */
+internal fun RouteOptions.toCostingOptions() =
+  ValhallaCostingOptions(
+    ValhallaAutoOptions(
+      useHighways = if (avoidHighways) 0.0 else null,
+      useTolls = if (avoidTolls) 0.0 else null,
+    )
+  )
+
 @Serializable
 internal class ValhallaRequest(
   val locations: List<ValhallaLocation>,
   val costing: String = "auto",
   @SerialName("costing_options") val costingOptions: ValhallaCostingOptions,
   val units: String = "kilometers",
-  // The preview only draws the line; turn-by-turn instructions come with navigation in v0.3.
+  // The preview only draws the line. Navigation asks for its own route with instructions
+  // (valhallaNavigationOptions).
   @SerialName("directions_type") val directionsType: String = "none",
 )
 

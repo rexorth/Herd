@@ -27,6 +27,24 @@ routes that guide you back on course when you leave them. Android first (Kotlin)
   "approximate location". If the address could be on more than one street (W vs E Main St), you
   pick. Long-pressing the spot on the map always works too.
 
+## v0.3 (part 1): turn-by-turn
+
+- **Start** on the route card navigates there: the next turn at the top (tap it for the full list),
+  arrival time and distance left at the bottom, and spoken directions ("In 900 feet, turn right onto
+  Chapala Street"). The mute button silences the voice.
+- Leaving the route gets a new one automatically.
+- The trip keeps going with the screen off or in another app: a notification shows the next turn
+  and has a stop button. Back sends Herd to the background rather than ending the trip; the X in the
+  bottom bar ends it.
+- Debug builds have **Simulate** next to Start: a simulated car drives the route at about 45 mph,
+  for testing at a desk.
+- Tapping the empty search box lists recent destinations (up to 8, saved on the phone). The × next
+  to one removes it. Dropped pins aren't saved.
+- The location dot and the camera following it glide between GPS fixes instead of jumping once a
+  second.
+
+Planned multi-stop routes, and getting back onto them when you leave them, come in part 2.
+
 ### Search and routing servers
 
 During development Herd uses free public servers with no API key:
@@ -38,32 +56,42 @@ During development Herd uses free public servers with no API key:
 | Exact US addresses ([Census Geocoder](https://geocoding.geo.census.gov/geocoder/)) | `geocoding.geo.census.gov` | US Census Bureau, public-domain data. Only on Enter/Find, never while typing. |
 
 They have usage limits, so the app debounces typing (300 ms, 3+ characters), cancels superseded
-requests, and only routes when you pick a destination or change an option. Base URLs live in
+requests, and only routes when you pick a destination, change an option, start a trip, or leave the
+route while navigating. Navigation asks Valhalla for the same route again with turn instructions
+(OSRM format, in miles where road signs use them). Base URLs live in
 `shared/.../net/HerdServices.kt`; pointing them at self-hosted servers needs no other change.
 
 ## Project layout
 
 ```
-androidApp/   Android app: Compose UI (MapScreen, SearchBar, RouteCard), MapViewModel
+androidApp/   Android app
+  ui/           Compose UI (MapScreen, SearchBar, RouteCard, NavigationOverlay), MapViewModel
+  nav/          Navigator: turn-by-turn on Ferrostar (Android-only, so it lives in the app)
 shared/       Kotlin Multiplatform module (Android + iOS):
   net/          HTTP client setup, service URLs
   search/       Photon and Census clients, address matching, Place model
-  routing/      Valhalla client, polyline decoding, Route model
+  routing/      Valhalla client, polyline decoding, Route model, navigation request options
   planner/      RoutePlanner: search-and-route state shared by both apps
+  history/      recent destinations
+  db/           the on-device SQLite database (queries in src/commonMain/sqldelight)
   format/       distance and duration text
 gradle/libs.versions.toml   all dependency versions
 ```
 
-Shared tests run on the JVM: `./gradlew :shared:testAndroidHostTest`.
+Shared tests run on the JVM: `./gradlew :shared:testAndroidHostTest`. Database tests use an
+in-memory SQLite. Ferrostar's core is native code built for Android, so navigation itself is tested
+on a phone (Simulate helps).
 
 Key libraries: [maplibre-compose](https://github.com/maplibre/maplibre-compose) (map rendering,
 location provider, location puck), Google Play Services fused location (through maplibre-compose's
-`location-runtime-gms`).
+`location-runtime-gms`), [Ferrostar](https://github.com/stadiamaps/ferrostar) (turn-by-turn
+guidance, maneuver banner, navigation notification), [SQLDelight](https://github.com/sqldelight/sqldelight)
+(on-device database).
 
 ## Build and run
 
 Requirements: Android Studio (recent enough for Android Gradle Plugin 9.3), JDK 17+, Android SDK
-platform 37.
+platform 37. The app runs on Android 7.1 (API 25) and up.
 
 ```
 ./gradlew :androidApp:assembleDebug
@@ -83,4 +111,5 @@ The iOS targets in `shared/` only build on macOS with Xcode; other hosts skip th
 
 Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL), tiles by
 OpenFreeMap, schema © OpenMapTiles. Search by Photon (komoot), address estimates from the US
-Census Bureau geocoder, routing by Valhalla (FOSSGIS server). The map's attribution button shows the map attribution; keep it visible.
+Census Bureau geocoder, routing by Valhalla (FOSSGIS server), turn-by-turn by Ferrostar (Stadia Maps,
+BSD-3). The map's attribution button shows the map attribution; keep it visible.

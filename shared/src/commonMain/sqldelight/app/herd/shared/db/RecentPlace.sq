@@ -1,0 +1,31 @@
+-- Destinations the user picked from search, newest first. Shown when the search box is empty.
+CREATE TABLE recent_place (
+  -- "osm:<id>" for OpenStreetMap places, otherwise the name and rounded position.
+  key TEXT NOT NULL PRIMARY KEY,
+  name TEXT NOT NULL,
+  subtitle TEXT,
+  latitude REAL NOT NULL,
+  longitude REAL NOT NULL,
+  osm_id INTEGER,
+  house_number TEXT,
+  street TEXT,
+  locality TEXT,
+  is_approximate INTEGER NOT NULL,
+  -- Epoch milliseconds.
+  used_at INTEGER NOT NULL
+);
+
+-- Replacing the row gives it a new rowid, which breaks ties between equal timestamps.
+upsert:
+INSERT OR REPLACE INTO recent_place VALUES ?;
+
+latest:
+SELECT * FROM recent_place ORDER BY used_at DESC, rowid DESC LIMIT :limit;
+
+delete:
+DELETE FROM recent_place WHERE key = :key;
+
+keepNewest:
+DELETE FROM recent_place WHERE key NOT IN (
+  SELECT key FROM recent_place ORDER BY used_at DESC, rowid DESC LIMIT :count
+);

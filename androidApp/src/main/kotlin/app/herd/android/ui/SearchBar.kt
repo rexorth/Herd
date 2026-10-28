@@ -39,7 +39,10 @@ import app.herd.android.R
 import app.herd.shared.planner.PlannerState
 import app.herd.shared.search.Place
 
-/** Search field with a suggestion list underneath while it's focused. */
+/**
+ * Search field with a list underneath while it's focused: suggestions for what's typed, or recent
+ * destinations while it's empty.
+ */
 @Composable
 fun SearchBar(
   state: PlannerState,
@@ -47,6 +50,7 @@ fun SearchBar(
   onSubmit: () -> Unit,
   onSelect: (Place) -> Unit,
   onClear: () -> Unit,
+  onRemoveRecent: (Place) -> Unit,
   modifier: Modifier = Modifier,
   fieldModifier: Modifier = Modifier,
 ) {
@@ -119,6 +123,52 @@ fun SearchBar(
           )
         }
       }
+    } else if (focused && state.query.isEmpty() && state.recents.isNotEmpty()) {
+      Card(Modifier.fillMaxWidth()) {
+        Text(
+          stringResource(R.string.recent_searches),
+          style = MaterialTheme.typography.labelLarge,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 4.dp),
+        )
+        state.recents.forEach { place ->
+          RecentRow(place, onClick = { onSelect(place) }, onRemove = { onRemoveRecent(place) })
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun RecentRow(place: Place, onClick: () -> Unit, onRemove: () -> Unit) {
+  Row(
+    Modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = 16.dp),
+    horizontalArrangement = Arrangement.spacedBy(12.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Icon(
+      painterResource(R.drawable.ic_history),
+      contentDescription = null,
+      tint = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Column(Modifier.weight(1f).padding(vertical = 10.dp)) {
+      Text(place.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+      placeContext(place)?.let {
+        Text(
+          it,
+          style = MaterialTheme.typography.bodyMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+    }
+    IconButton(onClick = onRemove) {
+      Icon(
+        painterResource(R.drawable.ic_close),
+        contentDescription = stringResource(R.string.recent_remove, place.name),
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
     }
   }
 }

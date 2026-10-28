@@ -11,10 +11,18 @@ ktor = "3.6.0"
 kotlinx-serialization = "1.11.0"
 kotlinx-coroutines = "1.11.0"
 androidx-lifecycle = "2.11.0"
+# Turn-by-turn navigation. Android-only (Rust core through JNA), so it's used from androidApp.
+ferrostar = "0.59.0"
+sqldelight = "2.4.1"
+# Ferrostar's AAR requires core library desugaring (java.time on older Android).
+desugar-jdk-libs = "2.1.5"
+# Ferrostar's route requests go through OkHttp. Same version Ktor's OkHttp engine resolves to.
+okhttp = "5.5.0"
 
 android-compileSdk = "37"
 android-targetSdk = "36"
-android-minSdk = "24"
+# Ferrostar needs 25.
+android-minSdk = "25"
 
 [libraries]
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }
@@ -37,6 +45,18 @@ ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 ktor-serialization-kotlinxJson = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
+sqldelight-android-driver = { module = "app.cash.sqldelight:android-driver", version.ref = "sqldelight" }
+sqldelight-native-driver = { module = "app.cash.sqldelight:native-driver", version.ref = "sqldelight" }
+sqldelight-coroutines = { module = "app.cash.sqldelight:coroutines-extensions", version.ref = "sqldelight" }
+# In-memory SQLite on the JVM, for host tests.
+sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", version.ref = "sqldelight" }
+ferrostar-core = { module = "com.stadiamaps.ferrostar:core", version.ref = "ferrostar" }
+ferrostar-googlePlayServices = { module = "com.stadiamaps.ferrostar:google-play-services", version.ref = "ferrostar" }
+# Maneuver banner, trip progress and the navigation notification. Not ui-maplibre: it pins an
+# older maplibre-compose, so Herd draws navigation on its own map.
+ferrostar-uiCompose = { module = "com.stadiamaps.ferrostar:ui-compose", version.ref = "ferrostar" }
+desugar-jdk-libs = { module = "com.android.tools:desugar_jdk_libs", version.ref = "desugar-jdk-libs" }
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
@@ -44,3 +64,4 @@ android-kmp-library = { id = "com.android.kotlin.multiplatform.library", version
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+sqldelight = { id = "app.cash.sqldelight", version.ref = "sqldelight" }

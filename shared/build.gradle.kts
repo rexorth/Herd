@@ -2,6 +2,7 @@ plugins {
   alias(libs.plugins.kotlin.multiplatform)
   alias(libs.plugins.android.kmp.library)
   alias(libs.plugins.kotlin.serialization)
+  alias(libs.plugins.sqldelight)
 }
 
 kotlin {
@@ -29,17 +30,33 @@ kotlin {
       implementation(libs.ktor.client.contentNegotiation)
       implementation(libs.ktor.serialization.kotlinxJson)
       implementation(libs.kotlinx.serialization.json)
+      implementation(libs.sqldelight.coroutines)
     }
     androidMain.dependencies {
       implementation(libs.ktor.client.okhttp)
+      implementation(libs.sqldelight.android.driver)
     }
     iosMain.dependencies {
       implementation(libs.ktor.client.darwin)
+      implementation(libs.sqldelight.native.driver)
     }
     commonTest.dependencies {
       implementation(kotlin("test"))
       implementation(libs.ktor.client.mock)
       implementation(libs.kotlinx.coroutines.test)
+    }
+    // Database tests run against SQLite on the JVM, so they live in the host-test source set.
+    getByName("androidHostTest").dependencies {
+      implementation(libs.sqldelight.sqlite.driver)
+    }
+  }
+}
+
+// On-device storage: recent searches now, planned routes next. Queries live in src/commonMain/sqldelight.
+sqldelight {
+  databases {
+    create("HerdDatabase") {
+      packageName.set("app.herd.shared.db")
     }
   }
 }

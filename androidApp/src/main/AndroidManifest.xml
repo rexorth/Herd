@@ -2,21 +2,35 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
   <uses-permission android:name="android.permission.INTERNET" />
-  <!-- Foreground location only. v0.1 never tracks location in the background. -->
+  <!-- Foreground location only. Navigation keeps going with the screen off through a foreground
+       service the driver starts, so Herd never asks for background location. -->
   <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
   <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+  <!-- The navigation notification (next turn, stop button). Navigation works without it. -->
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
   <application
     android:label="@string/app_name"
     android:supportsRtl="true"
     android:theme="@style/Theme.Herd">
+    <!-- singleTop: tapping the navigation notification returns to the running trip instead of
+         opening a second map. -->
     <activity
       android:name=".MainActivity"
-      android:exported="true">
+      android:exported="true"
+      android:launchMode="singleTop">
       <intent-filter>
         <action android:name="android.intent.action.MAIN" />
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
     </activity>
+
+    <!-- Ferrostar's navigation service: keeps location, guidance and voice running during a trip. -->
+    <service
+      android:name="com.stadiamaps.ferrostar.core.service.FerrostarForegroundService"
+      android:exported="false"
+      android:foregroundServiceType="location" />
   </application>
 </manifest>

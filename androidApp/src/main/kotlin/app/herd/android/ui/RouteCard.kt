@@ -3,14 +3,19 @@ package app.herd.android.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -27,13 +32,21 @@ import app.herd.shared.planner.PlannerState
 import app.herd.shared.planner.RouteStatus
 import app.herd.shared.routing.RouteOptions
 
-/** The picked destination, the route's distance and time, and the route preferences. */
+/**
+ * The picked destination, the route's distance and time, the route preferences, and Start.
+ *
+ * [onSimulate] is null except in debug builds. [startError] is why the last Start failed.
+ */
 @Composable
 fun RouteCard(
   state: PlannerState,
   onOptionsChange: (RouteOptions) -> Unit,
   onRetry: () -> Unit,
   onClose: () -> Unit,
+  onStart: () -> Unit,
+  onSimulate: (() -> Unit)?,
+  isStarting: Boolean,
+  startError: String?,
   modifier: Modifier = Modifier,
 ) {
   val destination = state.destination ?: return
@@ -79,6 +92,27 @@ fun RouteCard(
           onClick = { onOptionsChange(options.copy(avoidTolls = !options.avoidTolls)) },
           label = { Text(stringResource(R.string.avoid_tolls)) },
         )
+      }
+
+      startError?.let {
+        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+      }
+      val canStart = state.route is RouteStatus.Ready && !isStarting
+      Row(Modifier.padding(end = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(onClick = onStart, enabled = canStart, modifier = Modifier.weight(1f)) {
+          if (isStarting) {
+            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+            Text(stringResource(R.string.nav_starting))
+          } else {
+            Icon(painterResource(R.drawable.ic_navigation), contentDescription = null, Modifier.size(ButtonDefaults.IconSize))
+            Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+            Text(stringResource(R.string.nav_start))
+          }
+        }
+        if (onSimulate != null) {
+          OutlinedButton(onClick = onSimulate, enabled = canStart) { Text(stringResource(R.string.nav_simulate)) }
+        }
       }
     }
   }
