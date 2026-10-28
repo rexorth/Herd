@@ -1,0 +1,22 @@
+-- Version 1 had only recent_place. Version 2 adds planned routes.
+CREATE TABLE planned_route (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  avoid_highways INTEGER NOT NULL,
+  avoid_tolls INTEGER NOT NULL,
+  geometry TEXT NOT NULL,
+  distance_m REAL NOT NULL,
+  duration_s REAL NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE plan_point (
+  route_id INTEGER NOT NULL,
+  position INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  subtitle TEXT,
+  latitude REAL NOT NULL,
+  longitude REAL NOT NULL,
+  pass_through INTEGER NOT NULL,
+  PRIMARY KEY (route_id, position)
+);

@@ -89,4 +89,33 @@ class ValhallaClientTest {
   }
 
   private fun JsonObject.string(key: String) = this[key]!!.jsonPrimitive.content
+
+  @Test
+  fun passThroughPointsAreThroughAndEndsAreAlwaysStops() = runTest {
+    val seen = mutableListOf<SeenRequest>()
+    val valhalla = ValhallaClient(mockClient(Fixtures.VALHALLA_ROUTE_THREE_POINTS, seen = seen))
+    val via = Position(longitude = -119.7110, latitude = 34.4262)
+    val end = Position(longitude = -119.7240, latitude = 34.4300)
+
+    valhalla.route(
+      listOf(RoutePoint(santaBarbara, passThrough = true), RoutePoint(via, passThrough = true), RoutePoint(end, passThrough = true))
+    )
+
+    val types = Json.parseToJsonElement(seen.single().body).jsonObject["locations"]!!.jsonArray.map {
+      it.jsonObject["type"]!!.jsonPrimitive.content
+    }
+    assertEquals(listOf("break", "through", "break"), types)
+  }
+
+  @Test
+  fun parsesRouteThroughSeveralPoints() = runTest {
+    val valhalla = ValhallaClient(mockClient(Fixtures.VALHALLA_ROUTE_THREE_POINTS))
+
+    val route =
+      valhalla.route(listOf(RoutePoint(santaBarbara), RoutePoint(Position(-119.7110, 34.4262), passThrough = true), RoutePoint(Position(-119.7240, 34.4300))))
+
+    assertEquals(3_649.0, route.distanceMeters, absoluteTolerance = 0.5)
+    assertEquals(508.129, route.durationSeconds, absoluteTolerance = 0.001)
+    assertEquals(santaBarbara.latitude, route.geometry.first().latitude, absoluteTolerance = 0.001)
+  }
 }

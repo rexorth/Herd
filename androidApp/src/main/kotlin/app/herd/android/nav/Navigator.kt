@@ -3,7 +3,12 @@ package app.herd.android.nav
 import android.content.Context
 import android.location.Location
 import android.speech.tts.TextToSpeech
+import app.herd.shared.geo.distanceMeters
 import app.herd.shared.net.HerdServices
+import app.herd.shared.plan.JoinMode
+import app.herd.shared.plan.PlanTrip
+import app.herd.shared.plan.PlannedRoute
+import app.herd.shared.plan.TripWaypoint
 import app.herd.shared.routing.RouteOptions
 import app.herd.shared.routing.RoutingException
 import app.herd.shared.routing.distanceUnitsFor
@@ -11,11 +16,14 @@ import app.herd.shared.routing.valhallaErrorMessage
 import app.herd.shared.routing.valhallaNavigationOptions
 import app.herd.shared.search.Place
 import com.stadiamaps.ferrostar.composeui.notification.DefaultForegroundNotificationBuilder
+import com.stadiamaps.ferrostar.core.AlternativeRouteProcessor
 import com.stadiamaps.ferrostar.core.AndroidTtsObserver
 import com.stadiamaps.ferrostar.core.AndroidTtsStatusListener
+import com.stadiamaps.ferrostar.core.CorrectiveAction
 import com.stadiamaps.ferrostar.core.CustomRouteProvider
 import com.stadiamaps.ferrostar.core.FerrostarCore
 import com.stadiamaps.ferrostar.core.NavigationState
+import com.stadiamaps.ferrostar.core.RouteDeviationHandler
 import com.stadiamaps.ferrostar.core.http.OkHttpClientProvider.Companion.toOkHttpClientProvider
 import com.stadiamaps.ferrostar.core.location.NavigationLocationProvider
 import com.stadiamaps.ferrostar.core.location.SimulatedLocationProvider
@@ -47,10 +55,12 @@ import uniffi.ferrostar.RouteDeviation
 import uniffi.ferrostar.RouteDeviationTracking
 import uniffi.ferrostar.TripState
 import uniffi.ferrostar.UserLocation
+import uniffi.ferrostar.ValhallaWaypointProperties
 import uniffi.ferrostar.Waypoint
 import uniffi.ferrostar.WaypointAdvanceMode
 import uniffi.ferrostar.WaypointKind
 import uniffi.ferrostar.WellKnownRouteProvider
+import uniffi.ferrostar.createWaypointWithValhallaProperties
 import uniffi.ferrostar.stepAdvanceDistanceEntryAndExit
 import uniffi.ferrostar.stepAdvanceDistanceToEndOfStep
 
@@ -70,6 +80,10 @@ sealed interface NavUiState {
     val isRerouting: Boolean,
     val isMuted: Boolean,
     val isSimulating: Boolean,
+    /** The planned route being driven, if this trip is one. */
+    val plan: PlannedRoute? = null,
+    /** The start of [routeGeometry] that gets onto (or back onto) [plan]; empty when there's none. */
+    val joinLeg: List<Position> = emptyList(),
   ) : NavUiState
 
   data class Arrived(val destination: Place) : NavUiState
@@ -144,7 +158,41 @@ class Navigator(context: Context, private val scope: CoroutineScope) {
   private var geometrySource: List<GeographicCoordinate>? = null
   private var geometry: List<Position> = emptyList()
 
+  // A planned route being driven. Ferrostar asks for reroutes on its own thread, so the plan's
+  // progress and the join point are shared under planLock.
+  private val planLock = Any()
+  private var planTrip: PlanTrip? = null
+  private var lastFix: Position? = null
+  /** Where the route being followed meets the plan: the end of the join leg. */
+  private var joinAt: Position? = null
+  /** Where the route a reroute is fetching will meet the plan. */
+  private var pendingJoinAt: Position? = null
+  private var joinLegSource: List<GeographicCoordinate>? = null
+  private var joinLeg: List<Position> = emptyList()
+  private var tripPlan: PlannedRoute? = null
+
+  /** The route being followed, for the simulator to drive. */
+  @Volatile private var currentRoute: Route? = null
+  /** Where a simulated detour ends (debug builds). */
+  private var detourEnd: Position? = null
+
   init {
+    // Off a planned route, go back onto the plan rather than straight to the destination.
+    core.deviationHandler = RouteDeviationHandler { _, _, remaining ->
+      val leg =
+        synchronized(planLock) {
+          val trip = planTrip ?: return@synchronized null
+          val here = lastFix ?: return@synchronized null
+          trip.rejoin(here).also { pendingJoinAt = it.joinAt }
+        }
+      CorrectiveAction.GetNewRoutes(leg?.waypoints?.map { it.toFerrostar() } ?: remaining)
+    }
+    // Ferrostar's own behavior (take the first new route), keeping hold of it for the simulator.
+    core.alternativeRouteProcessor = AlternativeRouteProcessor { core, routes ->
+      val route = routes.firstOrNull() ?: return@AlternativeRouteProcessor
+      currentRoute = route
+      core.replaceRoute(route)
+    }
     scope.launch {
       combine(core.state, voice.muteState, locations.isSimulating, ::Triple).collect { (nav, muted, simulating) ->
         onCoreState(nav, muted, simulating)
@@ -156,9 +204,55 @@ class Navigator(context: Context, private val scope: CoroutineScope) {
    * Starts navigating to [destination] from the user's position, or [fallbackOrigin] if the phone
    * has no recent fix of its own. With [simulate], a simulated car drives the route instead of GPS.
    */
-  fun start(destination: Place, options: RouteOptions, fallbackOrigin: Position?, simulate: Boolean) {
+  fun start(destination: Place, options: RouteOptions, fallbackOrigin: Position?, simulate: Boolean) =
+    begin(destination, options, fallbackOrigin, simulate) {
+      listOf(Waypoint(destination.position.toCoordinate(), WaypointKind.BREAK))
+    }
+
+  /**
+   * Starts navigating [plan]. Away from its first point, [mode] says whether to drive there first
+   * or join the plan where it's closest. Leaving the route later leads back onto the plan.
+   */
+  fun startPlan(plan: PlannedRoute, mode: JoinMode, fallbackOrigin: Position?, simulate: Boolean) =
+    begin(plan.points.last().place, plan.options, fallbackOrigin, simulate, plan) { here ->
+      val trip = PlanTrip(plan)
+      val leg = trip.start(here.coordinates.toPosition(), mode)
+      synchronized(planLock) {
+        planTrip = trip
+        joinAt = leg.joinAt
+      }
+      leg.waypoints.map { it.toFerrostar() }
+    }
+
+  /**
+   * Debug builds, while simulating: the simulated car leaves the route and drives to [to], then
+   * follows navigation's route again. For trying out rerouting without a car.
+   */
+  fun simulateDetour(to: Position) {
+    if (!locations.isSimulating.value || mutableState.value !is NavUiState.Navigating) return
+    val from = synchronized(planLock) { lastFix } ?: return
+    scope.launch {
+      val here = UserLocation(from.toCoordinate(), 5.0, null, Instant.now(), null)
+      val detour =
+        runCatching { core.getRoutes(here, listOf(Waypoint(to.toCoordinate(), WaypointKind.BREAK))) }.getOrNull()?.firstOrNull()
+          ?: return@launch
+      detourEnd = to
+      locations.enableSimulationOn(detour)
+    }
+  }
+
+  /** Fetches the first route (to the [waypoints] for the driver's position) and starts following it. */
+  private fun begin(
+    destination: Place,
+    options: RouteOptions,
+    fallbackOrigin: Position?,
+    simulate: Boolean,
+    plan: PlannedRoute? = null,
+    waypoints: (UserLocation) -> List<Waypoint>,
+  ) {
     stop()
     tripOptions = valhallaNavigationOptions(options, distanceUnitsFor(Locale.getDefault().country))
+    tripPlan = plan
     mutableState.value = NavUiState.Starting(destination)
     // The speech engine takes a moment to start; do it while the route loads.
     voice.start()
@@ -166,8 +260,8 @@ class Navigator(context: Context, private val scope: CoroutineScope) {
       scope.launch {
         try {
           val here = currentLocation(fallbackOrigin) ?: throw RoutingException(NO_LOCATION)
-          val target = Waypoint(destination.position.toCoordinate(), WaypointKind.BREAK)
-          val route = core.getRoutes(here, listOf(target)).firstOrNull() ?: throw RoutingException(NO_ROUTE)
+          val route = core.getRoutes(here, waypoints(here)).firstOrNull() ?: throw RoutingException(NO_ROUTE)
+          currentRoute = route
           if (simulate) locations.enableSimulationOn(route) else locations.disableSimulation()
           core.startNavigation(route)
         } catch (e: CancellationException) {
@@ -202,8 +296,12 @@ class Navigator(context: Context, private val scope: CoroutineScope) {
         // Ferrostar flags the deviation as soon as it sees it, but only reports fetching while the
         // request is out, and it waits a few seconds between attempts. The new route clears both.
         val rerouting = nav.isCalculatingNewRoute || trip.deviation is RouteDeviation.Deviation
+        val routeLine = positions(nav.routeGeometry)
+        val here = trip.userLocation.coordinates.toPosition()
+        val leg = followPlan(here, trip.userLocation.horizontalAccuracy, nav.routeGeometry, routeLine)
+        endSimulatedDetour(here)
         mutableState.value =
-          NavUiState.Navigating(destination, trip, positions(nav.routeGeometry), rerouting, muted, simulating)
+          NavUiState.Navigating(destination, trip, routeLine, rerouting, muted, simulating, tripPlan, leg)
       }
 
       is TripState.Complete -> {
@@ -221,6 +319,39 @@ class Navigator(context: Context, private val scope: CoroutineScope) {
     }
   }
 
+  /**
+   * Records the driver's progress along a planned route, and returns the join leg of the route
+   * being followed (worked out again when a reroute brings a new route).
+   */
+  private fun followPlan(
+    here: Position,
+    accuracy: Double,
+    source: List<GeographicCoordinate>,
+    routeLine: List<Position>,
+  ): List<Position> =
+    synchronized(planLock) {
+      lastFix = here
+      val trip = planTrip ?: return@synchronized emptyList()
+      trip.update(here, accuracy)
+      if (source !== joinLegSource) {
+        joinLegSource = source
+        pendingJoinAt?.let {
+          joinAt = it
+          pendingJoinAt = null
+        }
+        joinLeg = joinAt?.let { trip.joinLeg(routeLine, it) }.orEmpty()
+      }
+      joinLeg
+    }
+
+  /** At the end of a simulated detour, the simulated car goes back to following navigation. */
+  private fun endSimulatedDetour(here: Position) {
+    val end = detourEnd ?: return
+    if (distanceMeters(here, end) > DETOUR_DONE_M) return
+    detourEnd = null
+    currentRoute?.let { locations.enableSimulationOn(it) }
+  }
+
   private fun fail(destination: Place, message: String) {
     endTrip()
     mutableState.value = NavUiState.Failed(destination, message)
@@ -230,6 +361,17 @@ class Navigator(context: Context, private val scope: CoroutineScope) {
     core.stopNavigation() // also stops the foreground service and any speech in progress
     locations.disableSimulation()
     voice.shutdown()
+    synchronized(planLock) {
+      planTrip = null
+      lastFix = null
+      joinAt = null
+      pendingJoinAt = null
+      joinLegSource = null
+      joinLeg = emptyList()
+    }
+    tripPlan = null
+    currentRoute = null
+    detourEnd = null
   }
 
   /**
@@ -272,6 +414,8 @@ class Navigator(context: Context, private val scope: CoroutineScope) {
     const val SIMULATION_SPEEDUP = 2u
     const val FRESH_FIX_MS = 30_000L
     const val ARRIVAL_LINGER_MS = 5_000L
+    /** A simulated detour is over once the car is this close to its end. */
+    const val DETOUR_DONE_M = 25.0
     const val NO_LOCATION = "Waiting for your location. Try again in a moment."
     const val NO_ROUTE = "No route found."
     const val CONNECTION_ERROR = "Couldn't reach the routing server. Check your connection and try again."
@@ -294,3 +438,17 @@ class Navigator(context: Context, private val scope: CoroutineScope) {
 }
 
 private fun Position.toCoordinate() = GeographicCoordinate(lat = latitude, lng = longitude)
+
+private fun GeographicCoordinate.toPosition() = Position(longitude = lng, latitude = lat)
+
+/** A plan point or rejoin spot as Ferrostar's waypoint. Pass-through points don't allow a U-turn. */
+private fun TripWaypoint.toFerrostar(): Waypoint =
+  if (passThrough) {
+    createWaypointWithValhallaProperties(
+      position.toCoordinate(),
+      WaypointKind.VIA,
+      ValhallaWaypointProperties(allowUturns = false),
+    )
+  } else {
+    Waypoint(position.toCoordinate(), WaypointKind.BREAK)
+  }

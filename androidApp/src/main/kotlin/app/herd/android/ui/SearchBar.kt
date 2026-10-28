@@ -42,6 +42,10 @@ import app.herd.shared.search.Place
 /**
  * Search field with a list underneath while it's focused: suggestions for what's typed, or recent
  * destinations while it's empty.
+ *
+ * [onShowSaved], when set, puts a saved-routes button in the empty field. A change of [pickKey]
+ * means a place was picked without becoming the destination (a plan's new stop), which closes the
+ * keyboard and list the same way.
  */
 @Composable
 fun SearchBar(
@@ -51,8 +55,11 @@ fun SearchBar(
   onSelect: (Place) -> Unit,
   onClear: () -> Unit,
   onRemoveRecent: (Place) -> Unit,
+  hint: String,
+  onShowSaved: (() -> Unit)?,
   modifier: Modifier = Modifier,
   fieldModifier: Modifier = Modifier,
+  pickKey: Any? = null,
 ) {
   val focusManager = LocalFocusManager.current
   var focused by remember { mutableStateOf(false) }
@@ -62,13 +69,14 @@ fun SearchBar(
   LaunchedEffect(state.destination?.position) {
     if (state.destination != null) focusManager.clearFocus()
   }
+  LaunchedEffect(pickKey) { focusManager.clearFocus() }
 
   Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
     Surface(shape = RoundedCornerShape(28.dp), shadowElevation = 6.dp, modifier = fieldModifier) {
       TextField(
         value = state.query,
         onValueChange = onQueryChange,
-        placeholder = { Text(stringResource(R.string.search_hint)) },
+        placeholder = { Text(hint) },
         leadingIcon = { Icon(painterResource(R.drawable.ic_search), contentDescription = null) },
         trailingIcon = {
           if (state.query.isNotEmpty()) {
@@ -77,6 +85,10 @@ fun SearchBar(
                 painterResource(R.drawable.ic_close),
                 contentDescription = stringResource(R.string.search_clear),
               )
+            }
+          } else if (onShowSaved != null) {
+            IconButton(onClick = onShowSaved) {
+              Icon(painterResource(R.drawable.ic_route), contentDescription = stringResource(R.string.saved_routes))
             }
           }
         },
