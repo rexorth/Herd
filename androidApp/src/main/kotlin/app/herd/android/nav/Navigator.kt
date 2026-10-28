@@ -285,9 +285,9 @@ class Navigator(context: Context, private val scope: CoroutineScope) {
         stepAdvanceCondition =
           stepAdvanceDistanceEntryAndExit(distanceToEndOfStep = 30u, distanceAfterEndOfStep = 5u, minimumHorizontalAccuracy = 32u),
         arrivalStepAdvanceCondition = stepAdvanceDistanceToEndOfStep(distance = 15u, minimumHorizontalAccuracy = 32u),
-        // Off route when more than 50 m from the line, judged only on fixes accurate to 25 m.
-        routeDeviationTracking =
-          RouteDeviationTracking.StaticThreshold(minimumHorizontalAccuracy = 25u, maxAcceptableDeviation = 50.0),
+        // Off route from 25 m away with good GPS, up to 50 m with poor GPS (see OffRouteDetector).
+        // Ferrostar's fixed 50 m threshold left the dot on the old route for seconds after a turn.
+        routeDeviationTracking = RouteDeviationTracking.Custom(OffRouteDeviationDetector()),
         snappedLocationCourseFiltering = CourseFiltering.SNAP_TO_ROUTE,
       )
   }
