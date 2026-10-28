@@ -3,6 +3,7 @@ package app.herd.shared.planner
 import app.herd.shared.history.RecentPlaceStore
 import app.herd.shared.routing.Route
 import app.herd.shared.routing.RouteOptions
+import app.herd.shared.routing.RoutePoint
 import app.herd.shared.routing.Router
 import app.herd.shared.routing.RoutingException
 import app.herd.shared.search.AddressLocator
@@ -58,7 +59,9 @@ class RoutePlannerTest {
     val calls = mutableListOf<Triple<Position, Position, RouteOptions>>()
     var failure: Exception? = null
 
-    override suspend fun route(from: Position, to: Position, options: RouteOptions): Route {
+    override suspend fun route(points: List<RoutePoint>, options: RouteOptions): Route {
+      val from = points.first().position
+      val to = points.last().position
       calls += Triple(from, to, options)
       failure?.let { throw it }
       return Route(
@@ -492,6 +495,26 @@ class RoutePlannerTest {
       assertEquals(listOf(morroBay), planner.state.value.recents)
       assertEquals(null, planner.state.value.destination)
     }
+  }
+
+  @Test
+  fun aPickHandlerTakesPickedPlacesInsteadOfRouting() = plannerTest { planner ->
+    val picked = mutableListOf<Place>()
+    planner.pickHandler = { picked += it }
+    planner.updateOrigin(here)
+    search.results = listOf(morroBay)
+    planner.onQueryChanged("morro")
+    advanceUntilIdle()
+
+    planner.selectPlace(morroBay)
+    planner.onQueryChanged("morro")
+    planner.submitQuery()
+    advanceUntilIdle()
+
+    assertEquals(listOf(morroBay, morroBay), picked)
+    assertEquals(null, planner.state.value.destination)
+    assertEquals("", planner.state.value.query)
+    assertTrue(router.calls.isEmpty())
   }
 
   @Test

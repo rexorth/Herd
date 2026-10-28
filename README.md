@@ -43,7 +43,26 @@ routes that guide you back on course when you leave them. Android first (Kotlin)
 - The location dot and the camera following it glide between GPS fixes instead of jumping once a
   second.
 
-Planned multi-stop routes, and getting back onto them when you leave them, come in part 2.
+## v0.3 (part 2): planned routes
+
+- **Add stop** on the route card turns the route into a plan: your position (named after its
+  address) and the destination. While a plan is open, search adds stops before the destination, and
+  a long-press on the map adds a pass-through point in the stretch of the route nearest to it, to
+  pull the route onto a particular road. Each point's menu moves it, switches it between a stop and
+  pass-through, or removes it. The route redraws as the plan changes.
+- A plan holds up to 9 points: the free routing server takes 10 locations per request, and
+  navigating needs one more for your own position.
+- **Save** keeps the plan on the phone. The route button in the empty search box lists saved plans;
+  tap one to open it. Rename and Delete are in the plan's menu.
+- **Start** on a plan more than 500 m from its first point asks how to begin: **From the start**
+  drives to the first point and then the whole plan (a group's meeting spot), **Join nearest** joins
+  the plan where it's closest and skips what's behind.
+- Leaving a plan while driving it leads back onto the plan, not straight to the destination: to the
+  nearest part of it that's still ahead, 300 m further along so the new route doesn't ask for a
+  U-turn, then on through every point not yet reached. The stretch that gets you onto (or back
+  onto) the plan is orange, with the plan itself drawn faintly underneath.
+- Debug builds: while simulating, a long-press sends the simulated car off route to that spot, so
+  the rejoin can be tried at a desk. Once there, it follows navigation's route again.
 
 ### Search and routing servers
 
@@ -57,7 +76,7 @@ During development Herd uses free public servers with no API key:
 
 They have usage limits, so the app debounces typing (300 ms, 3+ characters), cancels superseded
 requests, and only routes when you pick a destination, change an option, start a trip, or leave the
-route while navigating. Navigation asks Valhalla for the same route again with turn instructions
+route while navigating, and a plan reroutes once its edits pause for 400 ms. Navigation asks Valhalla for the same route again with turn instructions
 (OSRM format, in miles where road signs use them). Base URLs live in
 `shared/.../net/HerdServices.kt`; pointing them at self-hosted servers needs no other change.
 
@@ -65,13 +84,17 @@ route while navigating. Navigation asks Valhalla for the same route again with t
 
 ```
 androidApp/   Android app
-  ui/           Compose UI (MapScreen, SearchBar, RouteCard, NavigationOverlay), MapViewModel
+  ui/           Compose UI (MapScreen, SearchBar, RouteCard, PlanEditorPanel, SavedRoutesSheet,
+                NavigationOverlay), MapViewModel
   nav/          Navigator: turn-by-turn on Ferrostar (Android-only, so it lives in the app)
 shared/       Kotlin Multiplatform module (Android + iOS):
   net/          HTTP client setup, service URLs
   search/       Photon and Census clients, address matching, Place model
   routing/      Valhalla client, polyline decoding, Route model, navigation request options
   planner/      RoutePlanner: search-and-route state shared by both apps
+  plan/         planned routes: PlanEditor, saving them, PlanTrip (progress along a plan, joining
+                and rejoining it)
+  geo/          distances and positions along a line
   history/      recent destinations
   db/           the on-device SQLite database (queries in src/commonMain/sqldelight)
   format/       distance and duration text

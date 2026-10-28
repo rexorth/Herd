@@ -41,4 +41,17 @@ class PolylineTest {
   fun truncatedShapeFails() {
     assertFailsWith<IllegalArgumentException> { decodePolyline6("_izlhA") }
   }
+
+  @Test
+  fun encodingRoundTrips() {
+    val shape = decodePolyline6(Fixtures.VALHALLA_ROUTE_SANTA_BARBARA_GOLETA.substringAfter("\"shape\":\"").substringBefore("\"").replace("\\\\", "\\"))
+    assertEquals(shape, decodePolyline6(encodePolyline6(shape)))
+  }
+
+  @Test
+  fun encodesNegativeAndZeroSteps() {
+    val points = listOf(Position(-119.698200, 34.420800), Position(-119.698200, 34.420800), Position(0.0, -0.000001))
+    assertEquals(points, decodePolyline6(encodePolyline6(points)))
+    assertEquals("", encodePolyline6(emptyList()))
+  }
 }
