@@ -1,10 +1,12 @@
 package app.herd.shared.plan
 
+import app.herd.shared.routing.MAX_LOCATIONS
 import app.herd.shared.routing.Route
 import app.herd.shared.routing.RouteOptions
 import app.herd.shared.search.Place
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -27,6 +29,7 @@ class PlanTripTest {
   private fun point(name: String, meters: Double, passThrough: Boolean = false) =
     PlanPoint(Place(name, null, onPlan(meters)), passThrough)
 
+  // Start, a drive-through at 1.5 km, a stop at 3 km, the end at 5 km.
   private val plan =
     PlannedRoute(
       name = "North",
@@ -39,109 +42,133 @@ class PlanTripTest {
     leg.waypoints.map { w -> plan.points.firstOrNull { it.place.position == w.position }?.place?.name ?: "rejoin" }
 
   @Test
-  fun fromTheStartGoesToTheFirstPointThenEverything() {
+  fun fromStartFarHeadsToTheStartFirst() {
     val leg = PlanTrip(plan).start(beside(-2_000.0, 0.0), JoinMode.FromStart)
 
-    assertEquals(listOf("Start", "Via", "Stop", "End"), names(leg))
-    assertEquals(listOf(false, true, false, false), leg.waypoints.map { it.passThrough })
+    // Leg by leg: the first leg only goes to the start; the rest follows once it's reached.
+    assertEquals(listOf("Start"), names(leg))
+    assertEquals(0, leg.targetIndex)
     assertEquals(plan.points.first().place.position, leg.joinAt)
   }
 
   @Test
-  fun alreadyAtTheStartSkipsIt() {
-    val leg = PlanTrip(plan).start(beside(0.0, 100.0), JoinMode.FromStart)
+  fun fromStartNearBeginsTheFirstLegThroughTheDriveThrough() {
+    val leg = PlanTrip(plan).start(beside(0.0, 30.0), JoinMode.FromStart)
 
-    assertEquals(listOf("Via", "Stop", "End"), names(leg))
+    assertEquals(listOf("Via", "Stop"), names(leg))
+    assertEquals(listOf(true, false), leg.waypoints.map { it.passThrough })
+    assertEquals(2, leg.targetIndex)
     assertNull(leg.joinAt)
   }
 
   @Test
+  fun legsRunStopToStopAndCannotFinishEarly() {
+    val trip = PlanTrip(plan)
+    val leg1 = trip.start(onPlan(0.0), JoinMode.FromStart)
+    assertEquals(listOf("Via", "Stop"), names(leg1))
+    assertFalse(trip.isComplete)
+
+    // Drive up to and past the drive-through: it's reported once, in order, and marked reached.
+    assertEquals(listOf(1), trip.advance(onPlan(1_600.0), 5.0))
+    assertEquals(1, trip.reachedIndex)
+    assertEquals(emptyList(), trip.advance(onPlan(2_000.0), 5.0))
+
+    // Arrive at the stop (the navigation engine reports it); then the next leg is to the end.
+    trip.reachTarget()
+    assertEquals(2, trip.reachedIndex)
+    assertFalse(trip.isComplete)
+    val leg2 = trip.nextLeg(onPlan(3_000.0))
+    assertNotNull(leg2)
+    assertEquals(listOf("End"), names(leg2))
+    assertEquals(3, leg2.targetIndex)
+
+    trip.reachTarget()
+    assertTrue(trip.isComplete)
+    assertNull(trip.nextLeg(onPlan(5_000.0)))
+  }
+
+  @Test
+  fun aDetourPastTheFinishNeitherEndsTheTripNorSkipsStops() {
+    val trip = PlanTrip(plan)
+    trip.start(onPlan(0.0), JoinMode.FromStart) // heading to the stop at 3 km
+
+    // The detour wanders up by the finish (5 km), far past the current leg. Progress is measured
+    // only within the leg, so it can't leap forward and the trip can't end.
+    assertEquals(emptyList(), trip.advance(onPlan(5_000.0), 5.0))
+    assertEquals(0, trip.reachedIndex)
+    assertFalse(trip.isComplete)
+
+    // Rejoining still heads to the stop, through the drive-through not yet reached.
+    val leg = trip.rejoin(beside(4_000.0, 300.0))
+    assertEquals(listOf("Via", "Stop"), names(leg))
+    assertEquals(2, leg.targetIndex)
+  }
+
+  @Test
   fun joinNearestRejoinsAheadOfTheClosestSpot() {
-    // 200 m east of the plan, 2 km along: join 300 m further on, then the stop and the end.
+    // 200 m east of the plan, 2 km along: the drive-through is behind, so join 300 m on, then the stop.
     val leg = PlanTrip(plan).start(beside(2_000.0, 200.0), JoinMode.Nearest)
 
-    assertEquals(listOf("rejoin", "Stop", "End"), names(leg))
+    assertEquals(listOf("rejoin", "Stop"), names(leg))
     assertTrue(leg.waypoints.first().passThrough)
     assertEquals(2_300.0, (leg.joinAt!!.latitude - 34.40) * metersPerLatDegree, absoluteTolerance = 2.0)
   }
 
   @Test
-  fun aPointJustAheadIsJoinedDirectly() {
+  fun aStopJustAheadIsJoinedDirectly() {
     // 200 m before the stop: rejoining 300 m on would pass it, so go to the stop itself.
     val leg = PlanTrip(plan).start(beside(2_800.0, 150.0), JoinMode.Nearest)
 
-    assertEquals(listOf("Stop", "End"), names(leg))
+    assertEquals(listOf("Stop"), names(leg))
     assertEquals(plan.points[2].place.position, leg.joinAt)
   }
 
   @Test
-  fun progressOnlyMovesForwardAndOnlyOnThePlan() {
+  fun rejoinWithinALegGoesBackAheadOfTheDriver() {
     val trip = PlanTrip(plan)
-    trip.update(beside(1_000.0, 10.0), accuracyMeters = 8.0)
-    assertEquals(1_000.0, trip.progressMeters, absoluteTolerance = 1.0)
+    trip.start(onPlan(0.0), JoinMode.FromStart)
+    trip.advance(onPlan(2_000.0), 5.0) // past the drive-through, on the way to the stop
 
-    // Behind, far off the plan, or too vague to tell: no change.
-    trip.update(beside(500.0, 0.0), 8.0)
-    trip.update(beside(2_000.0, 300.0), 8.0)
-    trip.update(beside(4_000.0, 0.0), accuracyMeters = 60.0)
-    assertEquals(1_000.0, trip.progressMeters, absoluteTolerance = 1.0)
-
-    trip.update(beside(1_800.0, -20.0), 8.0)
-    assertEquals(1_800.0, trip.progressMeters, absoluteTolerance = 1.0)
-  }
-
-  @Test
-  fun rejoinGoesBackToThePlanAheadOfProgress() {
-    val trip = PlanTrip(plan)
-    trip.update(onPlan(2_000.0), 5.0)
-
-    // Turned off 100 m east just past 2 km.
+    // Turned off 100 m east just past 2 km: back onto the plan 300 m on, then the stop.
     val leg = trip.rejoin(beside(2_100.0, 100.0))
-
-    assertEquals(listOf("rejoin", "Stop", "End"), names(leg))
+    assertEquals(listOf("rejoin", "Stop"), names(leg))
     assertEquals(2_400.0, (leg.joinAt!!.latitude - 34.40) * metersPerLatDegree, absoluteTolerance = 2.0)
   }
 
   @Test
-  fun rejoinNeverSkipsAPointNotYetReached() {
+  fun rejoinNeverSkipsADriveThroughNotYetReached() {
     val trip = PlanTrip(plan)
-    trip.update(onPlan(1_000.0), 5.0)
+    trip.start(onPlan(0.0), JoinMode.FromStart)
+    trip.advance(onPlan(1_000.0), 5.0) // not yet at the drive-through
 
-    // Drove a parallel road past the via point and the stop.
-    val leg = trip.rejoin(beside(3_500.0, 200.0))
-
-    assertEquals(listOf("Via", "Stop", "End"), names(leg))
+    // Drove a parallel road past the drive-through: it's still kept.
+    val leg = trip.rejoin(beside(2_500.0, 200.0))
+    assertEquals(listOf("Via", "Stop"), names(leg))
   }
 
   @Test
-  fun aDetourOnTheWayToTheStartStillGoesToTheStart() {
+  fun completedGeometryGrowsAsStopsAreReached() {
     val trip = PlanTrip(plan)
-    trip.start(beside(-2_000.0, 0.0), JoinMode.FromStart)
+    assertTrue(trip.completedGeometry().isEmpty())
 
-    // Lost on the way, nearer the middle of the plan than its start.
-    val leg = trip.rejoin(beside(2_500.0, 400.0))
-
-    assertEquals(listOf("Start", "Via", "Stop", "End"), names(leg))
+    trip.start(onPlan(0.0), JoinMode.FromStart)
+    trip.reachTarget() // reached the stop at 3 km
+    val done = trip.completedGeometry()
+    assertTrue(done.size > 2)
+    assertEquals(3_000.0, (done.last().latitude - 34.40) * metersPerLatDegree, absoluteTolerance = 1.0)
   }
 
   @Test
-  fun pastTheLastPointGoesStraightThere() {
-    val trip = PlanTrip(plan)
-    trip.update(onPlan(4_990.0), 5.0)
-
-    assertEquals(listOf("End"), names(trip.rejoin(beside(4_990.0, 100.0))))
-  }
-
-  @Test
-  fun aFullPlanStillFitsOneRequest() {
+  fun eachLegFitsOneRequest() {
+    // A full plan of consecutive drive-throughs: the longest leg plus the driver's position still
+    // fits the server's location limit.
     val full =
-      plan.copy(points = (0 until MAX_PLAN_POINTS).map { point("P$it", it * 600.0, passThrough = it % 2 == 1) })
+      plan.copy(
+        points =
+          (0 until MAX_PLAN_POINTS).map { point("P$it", it * 600.0, passThrough = it != 0 && it != MAX_PLAN_POINTS - 1) }
+      )
     val trip = PlanTrip(full)
-
-    assertTrue(trip.start(beside(-1_000.0, 0.0), JoinMode.FromStart).waypoints.size <= MAX_PLAN_POINTS)
-    assertTrue(trip.start(beside(100.0, 300.0), JoinMode.Nearest).waypoints.size <= MAX_PLAN_POINTS)
-    trip.update(onPlan(700.0), 5.0)
-    assertTrue(trip.rejoin(beside(800.0, 200.0)).waypoints.size <= MAX_PLAN_POINTS)
+    assertTrue(trip.start(beside(0.0, 20.0), JoinMode.FromStart).waypoints.size <= MAX_LOCATIONS - 1)
   }
 
   @Test

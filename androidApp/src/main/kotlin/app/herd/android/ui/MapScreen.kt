@@ -128,8 +128,14 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
   val nav by navigator.state.collectAsState()
   val navigating = nav as? NavUiState.Navigating
   val arrived = nav as? NavUiState.Arrived
+  val atStop = nav as? NavUiState.AtStop
   val isNavigating = navigating != null
-  val inTrip = isNavigating || arrived != null
+  val inTrip = isNavigating || arrived != null || atStop != null
+  // The plan being driven, and how far along it: shared by the navigating and paused-at-a-stop states.
+  val tripPlan = navigating?.plan ?: atStop?.plan
+  val completedGeometry = navigating?.completedGeometry ?: atStop?.completedGeometry ?: emptyList()
+  val reachedIndex = navigating?.reachedIndex ?: atStop?.reachedIndex ?: -1
+  val detourTarget = navigating?.detourTarget ?: atStop?.detourTarget
   val previewRoute = (plan.route as? RouteStatus.Ready)?.route
   val editorRoute = (editor?.route as? RouteStatus.Ready)?.route
   // While an edited plan reroutes, its previous route stays drawn rather than blinking off.
@@ -151,19 +157,29 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
   // LocationTrackingEffect below), with the direction from the compass (see LocationDot).
   var browseTarget by remember { mutableStateOf<Pose?>(null) }
   val dotTarget =
-    navigating?.trip?.preferredUserLocation()?.let { Pose(it.position, it.courseOverGround?.degrees?.toDouble()) }
-      ?: browseTarget
+    when {
+      navigating != null ->
+        navigating.trip.preferredUserLocation()?.let { Pose(it.position, it.courseOverGround?.degrees?.toDouble()) }
+      // Paused at a stop: leave the dot where it arrived (in Simulate the real GPS is elsewhere).
+      atStop != null -> null
+      else -> browseTarget
+    }
   val glide = remember { Glide() }
 
   // Geometry objects are remembered so the map sources only rebuild when the line changes.
-  val lineGeometry = navigating?.routeGeometry ?: planRouteShown?.geometry ?: previewRoute?.geometry
+  // The bright line: the current leg while navigating; the plan preview while editing or browsing.
+  // Nothing extra while paused at a stop or arrived (the plan and its done stretch carry the view).
+  val lineGeometry =
+    navigating?.routeGeometry ?: if (inTrip) null else (planRouteShown?.geometry ?: previewRoute?.geometry)
   val routeLine = remember(lineGeometry) { lineGeometry?.let { LineString(it) } }
-  val planGeometry = navigating?.plan?.route?.geometry
+  val planGeometry = tripPlan?.route?.geometry
   val planLine = remember(planGeometry) { planGeometry?.let { LineString(it) } }
+  val completedLine = remember(completedGeometry) { completedGeometry.takeIf { it.size >= 2 }?.let { LineString(it) } }
   val joinGeometry = navigating?.joinLeg
   val joinLine = remember(joinGeometry) { joinGeometry?.takeIf { it.size >= 2 }?.let { LineString(it) } }
-  val planPoints = navigating?.plan?.points ?: editor?.points
-  val planMarkers = remember(planPoints) { planPoints?.let(::PlanMarkers) }
+  val planPoints = tripPlan?.points ?: editor?.points
+  val planMarkers = remember(planPoints, reachedIndex) { planPoints?.let { PlanMarkers(it, reachedIndex) } }
+  val detourPoint = remember(detourTarget) { detourTarget?.let { Point(it) } }
   val destination =
     navigating?.destination ?: arrived?.destination ?: editor?.points?.lastOrNull()?.place ?: plan.destination
   val destinationPoint = remember(destination?.position) { destination?.let { Point(it.position) } }
@@ -184,6 +200,17 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
           source = rememberGeoJsonSource(GeoJsonData.Features(planLine)),
           color = const(routeColor),
           opacity = const(PLAN_UNDER_TRIP_OPACITY),
+          width = const(6.dp),
+          cap = const(LineCap.Round),
+          join = const(LineJoin.Round),
+        )
+      }
+      // The stretch of the plan already driven, drawn darker so it reads as done.
+      if (completedLine != null) {
+        LineLayer(
+          id = "plan-done",
+          source = rememberGeoJsonSource(GeoJsonData.Features(completedLine)),
+          color = const(PlanColors.done),
           width = const(6.dp),
           cap = const(LineCap.Round),
           join = const(LineJoin.Round),
@@ -238,14 +265,36 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
           strokeWidth = const(3.dp),
         )
       }
+      // Points already passed, drawn dark blue so they read as done and ignorable.
+      planMarkers?.done?.let {
+        CircleLayer(
+          id = "plan-done-points",
+          source = rememberGeoJsonSource(GeoJsonData.Features(it)),
+          color = const(PlanColors.done),
+          radius = const(6.dp),
+          strokeColor = const(Color.White),
+          strokeWidth = const(2.dp),
+        )
+      }
       planMarkers?.start?.let {
         CircleLayer(
           id = "plan-start",
           source = rememberGeoJsonSource(GeoJsonData.Features(it)),
-          color = const(PlanColors.start),
+          color = const(if (planMarkers.startDone) PlanColors.done else PlanColors.start),
           radius = const(7.dp),
           strokeColor = const(Color.White),
           strokeWidth = const(3.dp),
+        )
+      }
+      // Where a simulated detour is heading (debug builds): an orange target the tester can spot.
+      if (detourPoint != null) {
+        CircleLayer(
+          id = "detour-target",
+          source = rememberGeoJsonSource(GeoJsonData.Features(detourPoint)),
+          color = const(Color.White),
+          radius = const(7.dp),
+          strokeColor = const(PlanColors.joinLeg),
+          strokeWidth = const(4.dp),
         )
       }
       if (destinationPoint != null) {
@@ -272,6 +321,7 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
   var navTopHeight by remember { mutableStateOf(0.dp) }
   var navBottomHeight by remember { mutableStateOf(0.dp) }
   var arrivedCardHeight by remember { mutableStateOf(0.dp) }
+  var atStopCardHeight by remember { mutableStateOf(0.dp) }
   val editorShown = editor != null && !inTrip
   val cardShown = plan.destination != null && !inTrip && !editorShown
   val panelShown = editorShown || cardShown
@@ -289,6 +339,7 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
           bottom = navBottomHeight,
         )
       arrived != null -> PaddingValues(top = topInset, bottom = arrivedCardHeight)
+      atStop != null -> PaddingValues(top = topInset, bottom = atStopCardHeight)
       else -> PaddingValues(top = topInset + 16.dp + searchFieldHeight + 8.dp, bottom = if (panelShown) bottomPanelHeight else 0.dp)
     }
 
@@ -371,16 +422,21 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
     moveCamera(CameraUpdate(center = fix.position, zoom = MapDefaults.USER_ZOOM))
   }
 
-  // Starting a trip tilts the map behind the car; ending one levels it and faces north again.
+  // Starting a trip tilts the map behind the car; ending one levels it and faces north again. A
+  // stop mid-plan keeps the driving view (it's a pause, not an end), so the camera doesn't jump.
   fun navigationView(pose: Pose?) =
     CameraUpdate(center = pose?.position, zoom = NAV_ZOOM, bearing = pose?.bearing, pitch = NAV_PITCH)
-  var wasNavigating by rememberSaveable { mutableStateOf(isNavigating) }
-  LaunchedEffect(isNavigating) {
-    if (isNavigating == wasNavigating) return@LaunchedEffect
-    wasNavigating = isNavigating
-    following = true
-    if (isNavigating) moveCamera(navigationView(dotTarget))
-    else moveCamera(CameraUpdate(center = dotTarget?.position, bearing = 0.0, pitch = 0.0, zoom = MapDefaults.USER_ZOOM))
+  var inNavView by rememberSaveable { mutableStateOf(isNavigating) }
+  LaunchedEffect(isNavigating, inTrip) {
+    if (isNavigating && !inNavView) {
+      inNavView = true
+      following = true
+      moveCamera(navigationView(dotTarget))
+    } else if (!inTrip && inNavView) {
+      inNavView = false
+      following = true
+      moveCamera(CameraUpdate(center = glide.current?.position, bearing = 0.0, pitch = 0.0, zoom = MapDefaults.USER_ZOOM))
+    }
   }
 
   // Picking another destination (or none) cancels a trip that's still starting, or clears why it
@@ -428,7 +484,7 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
 
   // Back during a trip leaves it running, like going home, instead of closing the app and ending it.
   val activity = LocalActivity.current
-  BackHandler(enabled = isNavigating) { activity?.moveTaskToBack(true) }
+  BackHandler(enabled = isNavigating || atStop != null) { activity?.moveTaskToBack(true) }
   BackHandler(enabled = editorShown) { closeEditor() }
 
   // The navigation notification needs permission on Android 13+. Navigation runs either way.
@@ -512,8 +568,26 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
         },
         onMuteChange = navigator::setMuted,
         onStop = navigator::stop,
+        onSimSpeed = if (BuildConfig.DEBUG) navigator::setSimSpeed else null,
         topModifier = Modifier.onSizeChanged { navTopHeight = with(density) { it.height.toDp() } },
         bottomModifier = Modifier.onSizeChanged { navBottomHeight = with(density) { it.height.toDp() } },
+      )
+
+      atStop != null -> AtStopCard(
+        state = atStop,
+        onContinue = navigator::continueToNextStop,
+        onStop = {
+          navigator.stop()
+          planner.clear()
+          if (editor?.hasUnsavedChanges == false) planEditor.close()
+        },
+        onSimSpeed = if (BuildConfig.DEBUG) navigator::setSimSpeed else null,
+        modifier =
+          Modifier.align(Alignment.BottomCenter)
+            .onSizeChanged { atStopCardHeight = with(density) { it.height.toDp() } }
+            .windowInsetsPadding(WindowInsets.navigationBars)
+            .padding(16.dp)
+            .fillMaxWidth(),
       )
 
       arrived != null -> ArrivedCard(
@@ -679,14 +753,21 @@ fun MapScreen(viewModel: MapViewModel = viewModel()) {
   }
 }
 
-/** A plan's start, its stops along the way, and its pass-through points, ready to draw. */
-private class PlanMarkers(points: List<PlanPoint>) {
+/**
+ * A plan's markers, ready to draw: its start, its upcoming stops and pass-through points, and the
+ * points already passed (index at or before [reachedIndex], drawn as done). In the editor
+ * [reachedIndex] is -1, so nothing is done.
+ */
+private class PlanMarkers(points: List<PlanPoint>, reachedIndex: Int) {
   val start: Point? = points.takeIf { it.size >= 2 }?.let { Point(it.first().place.position) }
-  private val middle = points.drop(1).dropLast(1)
-  val stops: MultiPoint? = middle.filter { !it.passThrough }.toMultiPoint()
-  val passThrough: MultiPoint? = middle.filter { it.passThrough }.toMultiPoint()
+  val startDone: Boolean = reachedIndex >= 0
+  private val middle = points.withIndex().toList().drop(1).dropLast(1)
+  val done: MultiPoint? = middle.filter { it.index <= reachedIndex }.toMultiPoint()
+  val stops: MultiPoint? = middle.filter { it.index > reachedIndex && !it.value.passThrough }.toMultiPoint()
+  val passThrough: MultiPoint? = middle.filter { it.index > reachedIndex && it.value.passThrough }.toMultiPoint()
 
-  private fun List<PlanPoint>.toMultiPoint() = takeIf { it.isNotEmpty() }?.let { MultiPoint(it.map { p -> p.place.position }) }
+  private fun List<IndexedValue<PlanPoint>>.toMultiPoint() =
+    takeIf { it.isNotEmpty() }?.let { MultiPoint(it.map { (_, p) -> p.place.position }) }
 }
 
 /** Starting [plan] [distanceMeters] from its first point, waiting on the user's choice. */

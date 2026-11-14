@@ -47,6 +47,8 @@ internal object PlanColors {
   val start = Color(0xFF2E7D32)
   /** The stretch of a trip that gets onto (or back onto) the plan. */
   val joinLeg = Color(0xFFF57C00)
+  /** A stretch or point of the plan already driven, so it reads as done. */
+  val done = Color(0xFF0D47A1)
 }
 
 internal enum class PointKind {
