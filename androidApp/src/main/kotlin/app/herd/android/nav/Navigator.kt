@@ -65,6 +65,9 @@ import uniffi.ferrostar.createWaypointWithValhallaProperties
 import uniffi.ferrostar.stepAdvanceDistanceEntryAndExit
 import uniffi.ferrostar.stepAdvanceDistanceToEndOfStep
 
+/** The simulated car's default speed multiplier (debug builds); shared by the state and the Navigator. */
+private const val DEFAULT_SIM_SPEED = 2
+
 /** What the navigation screen shows. */
 sealed interface NavUiState {
   data object Idle : NavUiState
@@ -588,7 +591,6 @@ class Navigator(context: Context, private val scope: CoroutineScope) {
 
   private companion object {
     val ROUTE_URL = "${HerdServices.VALHALLA_BASE_URL}/route"
-    const val DEFAULT_SIM_SPEED = 2
     const val MIN_SIM_SPEED = 1
     const val MAX_SIM_SPEED = 10
     const val FRESH_FIX_MS = 30_000L
