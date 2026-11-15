@@ -21,21 +21,40 @@ import org.maplibre.spatialk.geojson.Position
  */
 class RoutingException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
+/**
+ * A point a route visits. The first and last are always stops; in between, a [passThrough] point
+ * only shapes the route (keep to this road), without an arrival there.
+ */
+data class RoutePoint(val position: Position, val passThrough: Boolean = false)
+
 /** Computes driving routes. [ValhallaClient] is the real implementation. */
 interface Router {
-  /** Throws [RoutingException] when no route can be found. */
-  suspend fun route(from: Position, to: Position, options: RouteOptions = RouteOptions()): Route
+  /** A route through [points] (at least two), in order. Throws [RoutingException] when none can be found. */
+  suspend fun route(points: List<RoutePoint>, options: RouteOptions = RouteOptions()): Route
 }
 
-/** Driving routes from a Valhalla server's `/route` endpoint. */
+/** A route straight from [from] to [to]. */
+suspend fun Router.route(from: Position, to: Position, options: RouteOptions = RouteOptions()): Route =
+  route(listOf(RoutePoint(from), RoutePoint(to)), options)
+
+/**
+ * Driving routes from a Valhalla server's `/route` endpoint. The public FOSSGIS server takes at most
+ * [MAX_LOCATIONS] points per request.
+ */
 class ValhallaClient(
   private val http: HttpClient,
   private val baseUrl: String = HerdServices.VALHALLA_BASE_URL,
 ) : Router {
-  override suspend fun route(from: Position, to: Position, options: RouteOptions): Route {
+  override suspend fun route(points: List<RoutePoint>, options: RouteOptions): Route {
+    require(points.size >= 2) { "A route needs at least two points" }
     val request =
       ValhallaRequest(
-        locations = listOf(ValhallaLocation(from), ValhallaLocation(to)),
+        locations =
+          points.mapIndexed { i, point ->
+            // Valhalla's "through" keeps to the road without stopping or turning around there.
+            val passThrough = point.passThrough && i != 0 && i != points.lastIndex
+            ValhallaLocation(point.position, if (passThrough) "through" else "break")
+          },
         costingOptions = options.toCostingOptions(),
       )
     val response =
@@ -61,6 +80,9 @@ class ValhallaClient(
 /** Valhalla's explanation in an error response ("No path could be found for input"), if it gave one. */
 fun valhallaErrorMessage(responseBody: String): String? =
   runCatching { HerdJson.decodeFromString<ValhallaError>(responseBody).error }.getOrNull()
+
+/** The most points the public FOSSGIS Valhalla server accepts in one request. */
+const val MAX_LOCATIONS = 10
 
 internal fun ValhallaTrip.toRoute(): Route {
   // Each leg's shape starts where the previous one ended; drop the repeated point.
@@ -102,8 +124,8 @@ internal class ValhallaRequest(
 )
 
 @Serializable
-internal class ValhallaLocation(val lat: Double, val lon: Double) {
-  constructor(position: Position) : this(position.latitude, position.longitude)
+internal class ValhallaLocation(val lat: Double, val lon: Double, val type: String = "break") {
+  constructor(position: Position, type: String) : this(position.latitude, position.longitude, type)
 }
 
 @Serializable internal class ValhallaCostingOptions(val auto: ValhallaAutoOptions)

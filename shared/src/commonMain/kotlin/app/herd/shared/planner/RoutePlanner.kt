@@ -5,6 +5,7 @@ import app.herd.shared.routing.Route
 import app.herd.shared.routing.RouteOptions
 import app.herd.shared.routing.Router
 import app.herd.shared.routing.RoutingException
+import app.herd.shared.routing.route
 import app.herd.shared.search.AddressLocator
 import app.herd.shared.search.Place
 import app.herd.shared.search.PlaceSearch
@@ -86,7 +87,15 @@ class RoutePlanner(
     }
   }
 
-  private var origin: Position? = null
+  /** The user's latest position, if there's been a fix. */
+  var origin: Position? = null
+    private set
+
+  /**
+   * While set, places picked from search (a suggestion, a recent, or Enter) go here instead of
+   * becoming the destination. The plan editor uses it to add stops.
+   */
+  var pickHandler: ((Place) -> Unit)? = null
   /** The pending or running search. Every user action that changes what to search cancels it. */
   private var searchJob: Job? = null
   private var routeJob: Job? = null
@@ -220,6 +229,13 @@ class RoutePlanner(
   }
 
   private fun setDestination(place: Place) {
+    pickHandler?.let { handler ->
+      mutableState.update {
+        it.copy(query = "", suggestions = emptyList(), isSearching = false, searchError = null, offerExactAddress = false)
+      }
+      handler(place)
+      return
+    }
     mutableState.update {
       it.copy(
         query = place.name,
@@ -370,6 +386,8 @@ private fun isNear(a: Position, b: Position): Boolean =
 
 /** Map gestures can report longitudes past ±180° after panning across the antimeridian. */
 internal fun normalizeLongitude(longitude: Double): Double {
+  // In range already: returned as is, since the arithmetic below nudges the last digit.
+  if (longitude in -180.0..180.0) return longitude
   val wrapped = ((longitude + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
   return if (wrapped == -180.0 && longitude > 0) 180.0 else wrapped
 }

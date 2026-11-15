@@ -16,6 +16,19 @@ android {
     versionName = "0.3.0"
   }
 
+  signingConfigs {
+    // A fixed debug key, committed to the repo (debug keys carry no secret), so every build — CI
+    // or local — is signed the same. Without it each CI run generates a random debug key, and
+    // Android then refuses to install a new build over the last ("conflicts with existing
+    // package"), forcing an uninstall that would wipe saved routes and places.
+    getByName("debug") {
+      storeFile = file("debug.keystore")
+      storePassword = "android"
+      keyAlias = "androiddebugkey"
+      keyPassword = "android"
+    }
+  }
+
   buildTypes {
     release {
       isMinifyEnabled = false

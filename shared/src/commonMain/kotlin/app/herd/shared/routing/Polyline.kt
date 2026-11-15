@@ -1,5 +1,6 @@
 package app.herd.shared.routing
 
+import kotlin.math.round
 import org.maplibre.spatialk.geojson.Position
 
 /**
@@ -32,4 +33,29 @@ private fun readSignedValue(encoded: String, start: Int): Pair<Long, Int> {
   } while (chunk >= 0x20)
   val value = if (result and 1L != 0L) (result shr 1).inv() else result shr 1
   return value to index
+}
+
+/** Encodes [positions] as a polyline with 6 digits of precision; the inverse of [decodePolyline6]. */
+fun encodePolyline6(positions: List<Position>): String {
+  val out = StringBuilder(positions.size * 8)
+  var lastLat = 0L
+  var lastLon = 0L
+  for (position in positions) {
+    val lat = round(position.latitude * 1e6).toLong()
+    val lon = round(position.longitude * 1e6).toLong()
+    writeSignedValue(out, lat - lastLat)
+    writeSignedValue(out, lon - lastLon)
+    lastLat = lat
+    lastLon = lon
+  }
+  return out.toString()
+}
+
+private fun writeSignedValue(out: StringBuilder, value: Long) {
+  var rest = if (value < 0) (value shl 1).inv() else value shl 1
+  while (rest >= 0x20) {
+    out.append(((0x20 or (rest and 0x1f).toInt()) + 63).toChar())
+    rest = rest shr 5
+  }
+  out.append((rest.toInt() + 63).toChar())
 }
